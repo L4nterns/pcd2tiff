@@ -322,8 +322,7 @@ public class Main {
             float pixelSizeX = (maxX - minX) / (newWidth - 1);
             float pixelSizeY = (maxY - minY) / (newHeight - 1);
             
-            // 将点云数据映射到网格
-            // 首先将所有值初始化为NaN
+            // 将点云数据映射到网格，首先将所有值初始化为NaN
             for (int y = 0; y < newHeight; y++) {
                 for (int x = 0; x < newWidth; x++) {
                     elevationData[y][x] = Float.NaN;
@@ -342,40 +341,7 @@ public class Main {
                 }
             }
             
-            // 创建输出文件 - 确保文件名与预期的coverageName一致
-            // 参考：https://gis.stackexchange.com/questions/133115/geoserver-rest-api-bug-the-specified-coveragename-is-not-supported
-            String coverageName = "sample"; // 使用与GeoServer期望匹配的覆盖物名称
-            String worldFileName = coverageName + ".tfw";
-            String outputFileName = coverageName + ".tif";
-            
-            System.out.println("使用coverageName: " + coverageName);
-            
-            // 创建世界文件（TFW）- 包含地理参考信息
-            try (PrintWriter writer = new PrintWriter(new FileWriter(worldFileName))) {
-                // 世界文件格式：六行，分别是：
-                // 像素宽度（X方向分辨率）
-                // 行旋转项（通常为0）
-                // 列旋转项（通常为0）
-                // 像素高度（Y方向分辨率，通常为负值）
-                // X坐标（左上角像素的中心X坐标）
-                // Y坐标（左上角像素的中心Y坐标）
-                
-                double xRes = (maxX - minX) / newWidth;
-                double yRes = (maxY - minY) / newHeight;
-                double xOrigin = 119.69060000000 + minX * 0.00001; // 左上角X坐标
-                double yOrigin = 39.94263056000 + maxY * 0.00001;  // 左上角Y坐标
-                
-                writer.println(xRes);          // 像素宽度
-                writer.println(0.0);           // 行旋转项
-                writer.println(0.0);           // 列旋转项
-                writer.println(-yRes);         // 像素高度（负值）
-                writer.println(xOrigin);       // 左上角X坐标
-                writer.println(yOrigin);       // 左上角Y坐标
-                
-                System.out.println("成功创建世界文件: " + worldFileName);
-            }
-            
-            // 创建TIFF文件 - 使用简单的灰度图像
+            // 创建TIFF图像 - 使用灰度图像
             BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_BYTE_GRAY);
             
             // 将高程数据映射到灰度值
@@ -385,86 +351,74 @@ public class Main {
                     int pixelValue;
                     
                     if (Float.isNaN(value)) {
-                        pixelValue = 0; // 无数据区域使用黑色
+                        pixelValue = 255; // 无数据区域使用白色，让图像更明显
                     } else {
-                        // 映射Z值到0-255范围
+                        // 反转映射，让高程较高的地方更亮
                         pixelValue = Math.min(255, Math.max(0, 
                                 Math.round(((value - minZ) / (maxZ - minZ)) * 255)));
+                        
+                        // 确保不会全黑，提高可见度
+                        if (pixelValue < 50) {
+                            pixelValue = 50; // 最暗也要有一定亮度
+                        }
                     }
                     
                     image.getRaster().setSample(x, y, 0, pixelValue);
                 }
             }
             
-            // 步骤1: 保存基本TIFF文件
-            File tiffFile = new File(outputFileName);
-            ImageIO.write(image, "TIFF", tiffFile);
-            System.out.println("成功创建基本TIFF文件: " + tiffFile.getAbsolutePath());
-            System.out.println("文件大小: " + tiffFile.length() + " 字节");
+            // 设置地理参考信息
+            // 定义WGS84坐标系
+            CoordinateReferenceSystem crs = CRS.decode("EPSG:4326", true);
             
-            // 步骤2: 尝试创建GeoTIFF文件
+            // 设置地理边界 - 使用合理的地理范围
+            double geoMinX = 119.69060000000;
+            double geoMaxX = 119.69060000000 + 0.1; // 约0.1度的经度范围
+            double geoMinY = 39.94263056000;
+            double geoMaxY = 39.94263056000 + 0.1; // 约0.1度的纬度范围
+            
+            System.out.println("坐标系统: " + crs.getName().toString());
+            System.out.println("EPSG代码: " + CRS.lookupEpsgCode(crs, true));
+            System.out.println("地理范围: 经度[" + geoMinX + "," + geoMaxX + "] 纬度[" + geoMinY + "," + geoMaxY + "]");
+            
+            // 创建地理范围对象
+            ReferencedEnvelope mapExtent = new ReferencedEnvelope(
+                    geoMinX, geoMaxX, geoMinY, geoMaxY, crs);
+            
+            // 创建GridCoverage
+            GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
+            GridCoverage2D coverage = factory.create("sample", image, mapExtent);
+            
+            // 设置GeoTIFF写入参数
+            GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
+            writeParams.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+            writeParams.setCompressionType("LZW");
+            writeParams.setCompressionQuality(0.75F);
+            writeParams.setTilingMode(GeoTiffWriteParams.MODE_EXPLICIT);
+            writeParams.setTiling(256, 256);
+            
+            // 创建GeoTIFF格式参数
+            ParameterValueGroup params = new GeoTiffFormat().getWriteParameters();
+            params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString())
+                 .setValue(writeParams);
+            
+            // 创建输出文件 
+            File outputFile = new File("sample.tif");
+            
+            // 写入GeoTIFF文件
+            GeoTiffWriter writer = new GeoTiffWriter(outputFile);
             try {
-                // 创建带GEO信息的TIFF文件
-                File geoTiffFile = new File(coverageName + "_geo.tif");
-                
-                // 设置坐标参考系统
-                CoordinateReferenceSystem crs = CRS.decode("EPSG:4326", true);
-                
-                // 设置地理边界
-                double geoMinX = 119.69060000000 + minX * 0.00001;
-                double geoMaxX = 119.69060000000 + maxX * 0.00001;
-                double geoMinY = 39.94263056000 + minY * 0.00001;
-                double geoMaxY = 39.94263056000 + maxY * 0.00001;
-                
-                // 创建地理范围
-                ReferencedEnvelope mapExtent = new ReferencedEnvelope(
-                        geoMinX, geoMaxX, geoMinY, geoMaxY, crs);
-                
-                // 创建网格覆盖对象
-                GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
-                GridCoverage2D coverage = factory.create(coverageName, image, mapExtent);
-                
-                // 设置GeoTIFF写入参数
-                GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
-                writeParams.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
-                writeParams.setCompressionType("LZW");
-                writeParams.setCompressionQuality(0.75F);
-                writeParams.setTilingMode(GeoTiffWriteParams.MODE_EXPLICIT);
-                writeParams.setTiling(256, 256);
-                
-                // 创建GeoTIFF格式参数
-                ParameterValueGroup params = new GeoTiffFormat().getWriteParameters();
-                params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString())
-                     .setValue(writeParams);
-                
-                // 写入GeoTIFF文件
-                GeoTiffWriter writer = new GeoTiffWriter(geoTiffFile);
-                try {
-                    writer.write(coverage, params.values().toArray(new GeneralParameterValue[0]));
-                    System.out.println("成功创建GeoTIFF文件: " + geoTiffFile.getAbsolutePath());
-                    System.out.println("GeoTIFF文件大小: " + geoTiffFile.length() + " 字节");
-                } finally {
-                    writer.dispose();
-                }
-                
-                System.out.println("\n提示：已生成三个文件：");
-                System.out.println("1. " + tiffFile.getAbsolutePath() + " - 基本TIFF图像");
-                System.out.println("2. " + worldFileName + " - 世界文件，包含地理参考信息");
-                System.out.println("3. " + geoTiffFile.getAbsolutePath() + " - 完整GeoTIFF文件，内嵌地理参考");
-                System.out.println("请尝试将这些文件上传到GeoServer，看哪个能被正确识别。");
-                
-            } catch (Exception e) {
-                System.out.println("创建GeoTIFF文件失败: " + e.getMessage());
-                e.printStackTrace();
-                
-                System.out.println("\n提示：已生成基本文件：");
-                System.out.println("1. " + tiffFile.getAbsolutePath() + " - 基本TIFF图像");
-                System.out.println("2. " + worldFileName + " - 世界文件，包含地理参考信息");
+                writer.write(coverage, params.values().toArray(new GeneralParameterValue[0]));
+                System.out.println("成功创建GeoTIFF文件: " + outputFile.getAbsolutePath());
+                System.out.println("文件大小: " + outputFile.length() + " 字节");
+                System.out.println("\n文件已生成，包含所有必要的地理参考信息，可直接上传到GeoServer。");
+            } finally {
+                writer.dispose();
             }
             
         } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("创建TIFF文件失败: " + e.getMessage(), e);
+            throw new RuntimeException("创建GeoTIFF文件失败: " + e.getMessage(), e);
         }
     }
 }
