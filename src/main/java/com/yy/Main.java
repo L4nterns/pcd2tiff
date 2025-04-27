@@ -1,52 +1,26 @@
 package com.yy;
 
 import java.awt.image.BufferedImage;
-import java.awt.image.WritableRaster;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 
 import org.geotools.coverage.CoverageFactoryFinder;
-import org.geotools.coverage.GridSampleDimension;
 import org.geotools.coverage.grid.GridCoverage2D;
-import org.geotools.coverage.grid.GeneralGridEnvelope;
-import org.geotools.coverage.grid.GridGeometry2D;
 import org.geotools.coverage.grid.io.AbstractGridFormat;
-import org.geotools.coverage.grid.io.GridCoverage2DReader;
-import org.geotools.coverage.grid.io.GridFormatFinder;
 import org.geotools.gce.geotiff.GeoTiffFormat;
 import org.geotools.gce.geotiff.GeoTiffWriteParams;
 import org.geotools.gce.geotiff.GeoTiffWriter;
-import org.geotools.geometry.DirectPosition2D;
 import org.geotools.referencing.CRS;
-import org.opengis.coverage.ColorInterpretation;
-import org.opengis.coverage.grid.Format;
-import org.opengis.coverage.grid.GridCoverageReader;
-import org.opengis.coverage.grid.GridCoverageWriter;
-import org.opengis.geometry.MismatchedDimensionException;
 import org.opengis.parameter.GeneralParameterValue;
 import org.opengis.parameter.ParameterValueGroup;
-import org.opengis.referencing.FactoryException;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
-import org.opengis.referencing.operation.MathTransform;
-import org.opengis.referencing.operation.TransformException;
 
 import javax.imageio.ImageIO;
-import java.awt.*;
-import java.awt.color.ColorSpace;
-import java.awt.geom.AffineTransform;
-import java.awt.image.BufferedImage;
-import java.io.File;
-import java.io.IOException;
-import java.util.List;
 
 import static org.apache.commons.lang3.StringUtils.*;
 
@@ -59,66 +33,12 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-
-import it.geosolutions.jaiext.nullop.NullDescriptor;
-
 import static com.yy.Main.PcdPrefixEnum.*;
-
-// GeoTools imports - Using the api package as per your provided code
-import org.geotools.coverage.grid.GridCoverage2D;
-// GeoTools imports
 import org.geotools.coverage.grid.GridCoverageFactory;
-import org.geotools.coverage.grid.GridGeometry2D;
-import org.geotools.gce.geotiff.GeoTiffWriter;
-// Add this import for Envelope2D
-import org.geotools.geometry.Envelope2D; // Ensure this import is present and resolves
-import org.geotools.geometry.GeneralEnvelope;
 import org.geotools.geometry.jts.ReferencedEnvelope;
-import org.geotools.parameter.DefaultParameterDescriptorGroup;
-import org.geotools.referencing.crs.DefaultGeographicCRS;
-import org.opengis.referencing.crs.CoordinateReferenceSystem;
-
 import javax.imageio.ImageWriteParam;
-import javax.imageio.spi.ImageWriterSpi; // Might be needed depending on setup
-import java.awt.image.RenderedImage; // Import RenderedImage
-
-import java.awt.image.BufferedImage;
-import java.awt.image.ColorModel;
-import java.awt.image.ComponentColorModel;
-import java.awt.image.DataBuffer;
-import java.awt.image.DataBufferFloat;
-import java.awt.image.Raster;
-import java.awt.image.WritableRaster;
-import java.awt.Transparency;
-import java.awt.image.DataBufferInt;
-import java.lang.reflect.Field;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.PrintWriter;
 
 public class Main {
-
-    // pcd格式像这样
-    //
-    // # .PCD v0.7 - Point Cloud Data file format
-    // VERSION 0.7
-    // FIELDS x y z
-    // SIZE 4 4 4
-    // TYPE F F F
-    // COUNT 1 1 1
-    // WIDTH 900000
-    // HEIGHT 1
-    // VIEWPOINT 0 0 0 1 0 0 0
-    // POINTS 900000
-    // DATA ascii
-    // 0 0 0
-    // 1 0 0
-    // 2 0 0
-    // 3 0 0
-    // 4 0 0
-    // 5 0 0
-    // ...
 
     private static final OkHttpClient HTTP_CLIENT = new OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
@@ -245,10 +165,8 @@ public class Main {
         }
 
         try {
+            handlePointList(pointList);
             createTiff(pointList, width, height);
-            // pointList.stream().forEach(v1 -> {
-            // System.out.println(v1[0] + "," + v1[1] + "," + v1[2]);
-            // });
             System.out.println("GeoTIFF file 'output.tif' created successfully.");
         } catch (Exception e) {
             System.err.println("Error creating GeoTIFF: " + e.getMessage());
@@ -275,13 +193,6 @@ public class Main {
         }
     }
 
-    public static void createTiff(List<Float[]> pointList, int width, int height) {
-        handlePointList(pointList);
-
-        // 调用简化版本的方法
-        createSimpleTiff(pointList, width, height);
-    }
-
     public static void handlePointList(List<Float[]> pointList) {
         pointList.forEach(v1 -> {
             Float x = v1[0];
@@ -302,11 +213,7 @@ public class Main {
         });
     }
 
-    /**
-     * 创建单个GeoTIFF文件，内嵌所有地理参考信息
-     * 适用于EPSG:4549坐标系，单位为米的点云数据
-     */
-    public static void createSimpleTiff(List<Float[]> pointList, int width, int height) {
+    public static void createTiff(List<Float[]> pointList, int width, int height) {
         try {
             // 查找点云数据的实际范围
             float minX = Float.MAX_VALUE;
@@ -377,21 +284,21 @@ public class Main {
                         image.setRGB(x, y, 0x00000000); // 完全透明 (alpha=0)
                     } else {
                         // 高程越大越黑，同时高程越低越透明
-                        
+
                         // 灰度值：高程越高越黑
                         int grayValue = 255 - Math.min(255, Math.max(0,
                                 Math.round(((value - minZ) / (maxZ - minZ)) * 255)));
-                        
+
                         // 确保可见度
                         if (grayValue > 205) {
                             grayValue = 205; // 最亮不超过205
                         }
-                        
+
                         // 透明度：高程越低越透明
                         // 将高程从0-100%映射到30-255的alpha值（最低处至少30%不透明度）
                         int alphaValue = 30 + Math.min(225, Math.max(0,
                                 Math.round(((value - minZ) / (maxZ - minZ)) * 225)));
-                        
+
                         // 创建带有高程相关透明度的颜色 (ARGB格式)
                         int argb = (alphaValue << 24) | (grayValue << 16) | (grayValue << 8) | grayValue;
                         image.setRGB(x, y, argb);
