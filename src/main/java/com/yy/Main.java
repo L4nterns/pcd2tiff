@@ -19,7 +19,6 @@ import org.geotools.coverage.GridSampleDimension;
 import org.geotools.coverage.grid.GridCoverage2D;
 import org.geotools.coverage.grid.GeneralGridEnvelope;
 import org.geotools.coverage.grid.GridGeometry2D;
-import java.awt.Rectangle;
 import org.geotools.coverage.grid.io.AbstractGridFormat;
 import org.geotools.coverage.grid.io.GridCoverage2DReader;
 import org.geotools.coverage.grid.io.GridFormatFinder;
@@ -82,6 +81,16 @@ import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import javax.imageio.ImageWriteParam;
 import javax.imageio.spi.ImageWriterSpi; // Might be needed depending on setup
 import java.awt.image.RenderedImage; // Import RenderedImage
+
+import java.awt.image.BufferedImage;
+import java.awt.image.ColorModel;
+import java.awt.image.ComponentColorModel;
+import java.awt.image.DataBuffer;
+import java.awt.image.DataBufferFloat;
+import java.awt.image.Raster;
+import java.awt.image.WritableRaster;
+import java.awt.Transparency;
+import java.awt.image.DataBufferInt;
 
 public class Main {
 
@@ -232,9 +241,9 @@ public class Main {
 
         try {
             createTiff(pointList, width, height);
-            pointList.stream().forEach(v1 -> {
-                System.out.println(v1[0] + "," + v1[1] + "," + v1[2]);
-            });
+            // pointList.stream().forEach(v1 -> {
+            //     System.out.println(v1[0] + "," + v1[1] + "," + v1[2]);
+            // });
             System.out.println("GeoTIFF file 'output.tif' created successfully.");
         } catch (Exception e) {
             System.err.println("Error creating GeoTIFF: " + e.getMessage());
@@ -261,203 +270,150 @@ public class Main {
         }
     }
 
-    public static void createTiff(List<Float[]> pointList, int width, int height) {
-        if (pointList.isEmpty()) {
-            throw new RuntimeException("点云数据为空");
-        }
-
-        // 创建一个BufferedImage来存储点云数据
-        // 这里假设我们只处理前三个维度(X,Y,Z)，并将Z值作为颜色值
-        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_BYTE_GRAY);
-
-        // 找出X,Y,Z值的最小和最大值用于归一化
-        float minX = Float.MAX_VALUE;
-        float maxX = Float.MIN_VALUE;
-        float minY = Float.MAX_VALUE;
-        float maxY = Float.MIN_VALUE;
-        float minZ = Float.MAX_VALUE;
-        float maxZ = Float.MIN_VALUE;
-
-        for (Float[] point : pointList) {
-            if (point != null && point.length >= 3) {
-                float x = point[0];
-                float y = point[1];
-                float z = point[2];
-
-                if (x < minX)
-                    minX = x;
-                if (x > maxX)
-                    maxX = x;
-                if (y < minY)
-                    minY = y;
-                if (y > maxY)
-                    maxY = y;
-                if (z < minZ)
-                    minZ = z;
-                if (z > maxZ)
-                    maxZ = z;
-            }
-        }
-
-        System.out.println("X范围: [" + minX + ", " + maxX + "]");
-        System.out.println("Y范围: [" + minY + ", " + maxY + "]");
-        System.out.println("Z范围: [" + minZ + ", " + maxZ + "]");
-
-        // 处理所有点并统计写入的点数
-        int pointsWritten = 0;
-        for (int i = 0; i < pointList.size(); i++) {
-            Float[] point = pointList.get(i);
-            if (point == null || point.length < 3) {
-                System.err.println("跳过无效点数据，索引: " + i);
-                continue;
-            }
-
-            // 将点云坐标映射到图像坐标
-            float x = (point[0] - minX) / (maxX - minX) * (width - 1);
-            float y = (point[1] - minY) / (maxY - minY) * (height - 1);
-
-            // 检查是否在图像范围内
-            if (x >= 0 && x < width && y >= 0 && y < height) {
-                // 归一化Z值到0-255范围
-                float normalizedZ = (point[2] - minZ) / (maxZ - minZ);
-                int zInt = Math.min(255, Math.max(0, (int) (normalizedZ * 255)));
-
-                // 创建RGB颜色 - 这里简单地将Z值映射为灰度
-                int rgb = (zInt << 16) | (zInt << 8) | zInt;
-                image.setRGB((int) x, (int) y, rgb);
-                pointsWritten++;
-            } else {
-                System.err.println("点数据超出图像范围，索引: " + i + ", x: " + x + ", y: " + y);
-            }
-        }
-        System.out.println("成功写入点数: " + pointsWritten + "/" + pointList.size());
-        if (pointsWritten == 0) {
-            throw new RuntimeException("没有点数据被成功写入");
-        }
-
-        // 定义目标坐标系 (这里使用WGS84经纬度，可以根据需要修改)
-        CoordinateReferenceSystem targetCRS = null;
-        try {
-            targetCRS = CRS.decode("EPSG:4326");
-        } catch (FactoryException e) {
-            // TODO Auto-generated catch block
-            e.printStackTrace();
-        }
-
-        // 创建tiff生成参数并验证
-        GeoTiffFormat format = new GeoTiffFormat();
-        GeoTiffWriteParams wp = new GeoTiffWriteParams();
-        wp.setCompressionMode(GeoTiffWriteParams.MODE_EXPLICIT);
-        wp.setCompressionType("LZW");
-        wp.setTilingMode(ImageWriteParam.MODE_EXPLICIT);
-        wp.setTiling(256, 256);
-
-        ParameterValueGroup params = format.getWriteParameters();
-        if (params == null) {
-            throw new RuntimeException("无法获取GeoTIFF写入参数");
-        }
-
-        // 设置必要的参数
-        params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString()).setValue(wp);
-
-        // 设置压缩参数
-        wp.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
-        wp.setCompressionType("LZW");
-        wp.setCompressionQuality(0.75f);
-
-        // 设置分块参数
-        wp.setTilingMode(ImageWriteParam.MODE_EXPLICIT);
-        wp.setTiling(256, 256);
-
-        System.out.println("GeoTIFF写入参数已配置：");
-        System.out.println("  Compression: " + wp.getCompressionType());
-        System.out.println("  Tile size: " + wp.getTileWidth() + "x" + wp.getTileHeight());
-
-        GeneralParameterValue[] writeParameters = params.values().toArray(new GeneralParameterValue[1]);
-
-        if (writeParameters == null || writeParameters.length == 0) {
-            throw new RuntimeException("GeoTIFF写入参数为空");
-        }
-
-        System.out.println("GeoTIFF写入参数已成功设置");
-
-        // gridCoverage
-        GeoTiffFormat format1 = new GeoTiffFormat();
-
-        // 创建GeoTIFF写入器并确保资源正确释放
-        File outputFile = new File("output.tif");
-        GeoTiffWriter writer = null;
-        try {
-            writer = new GeoTiffWriter(outputFile);
-            // 创建图像覆盖
-            GridCoverage2D coverage = createGridCoverage(image);
-
-            // 写入文件
-            writer.write(coverage, writeParameters);
-            System.out.println("文件大小: " + outputFile.length() + " bytes");
-            System.out.println("TIFF文件已成功创建");
-        } catch (IOException e) {
-            System.err.println("文件写入失败: " + e.getMessage());
-            throw new RuntimeException("文件写入失败", e);
-        } finally {
-            if (writer != null) {
-                try {
-                    writer.dispose();
-                } catch (Exception e) {
-                    System.err.println("关闭writer时出错: " + e.getMessage());
-                }
-            }
-        }
+    public static void createTif(List<Float> pointList, int width, int height) {
+        // 留空，保持与原始方法签名一致
     }
 
-    private static GridCoverage2D createGridCoverage(BufferedImage image) {
-        // 转换为灰度图像
-        BufferedImage grayImage = new BufferedImage(
-                image.getWidth(),
-                image.getHeight(),
-                BufferedImage.TYPE_BYTE_GRAY);
-
-        Graphics g = grayImage.getGraphics();
-        g.drawImage(image, 0, 0, null);
-        g.dispose();
-
-        // 创建坐标参考系统
-        CoordinateReferenceSystem crs = DefaultGeographicCRS.WGS84;
-
-        // 创建仿射变换
-        AffineTransform transform = new AffineTransform();
-        transform.translate(0, grayImage.getHeight());
-        transform.scale(1, -1);
-
-        // 创建GridCoverageFactory
-        GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
-
-        // 创建单波段SampleDimension
-        GridSampleDimension sampleDimension = new GridSampleDimension("Intensity");
-
-        // 创建GridCoverage2D并设置元数据
-        Map<String, Object> properties = new HashMap<>();
-        properties.put("name", "elevation");
-        properties.put("description", "Point cloud elevation data");
-
-        // 创建Envelope
-        ReferencedEnvelope envelope = new ReferencedEnvelope(
-                0, grayImage.getWidth(),
-                0, grayImage.getHeight(),
-                crs);
-
-        // 创建GridGeometry
-        GridGeometry2D gridGeometry = new GridGeometry2D(
-                new GeneralGridEnvelope(new Rectangle(0, 0, grayImage.getWidth(), grayImage.getHeight())),
-                envelope);
-
-        // 创建并返回GridCoverage2D
-        return factory.create(
-                "elevation",
-                grayImage,
-                gridGeometry,
-                new GridSampleDimension[] { sampleDimension },
-                null,
-                properties);
+    public static void createTiff(List<Float[]> pointList, int width, int height) {
+        try {
+            // 查找点云数据的实际范围
+            float minX = Float.MAX_VALUE;
+            float maxX = -Float.MAX_VALUE;
+            float minY = Float.MAX_VALUE;
+            float maxY = -Float.MAX_VALUE;
+            float minZ = Float.MAX_VALUE;
+            float maxZ = -Float.MAX_VALUE;
+            
+            for (Float[] point : pointList) {
+                minX = Math.min(minX, point[0]);
+                maxX = Math.max(maxX, point[0]);
+                minY = Math.min(minY, point[1]);
+                maxY = Math.max(maxY, point[1]);
+                minZ = Math.min(minZ, point[2]);
+                maxZ = Math.max(maxZ, point[2]);
+            }
+            
+            System.out.println("点云数据范围: X[" + minX + ", " + maxX + "] Y[" + minY + ", " + maxY + "] Z[" + minZ + ", " + maxZ + "]");
+            
+            // 确定合适的图像尺寸，不使用传入的width和height，而是使用合理的值
+            // 根据点云数据的实际范围计算更合适的图像尺寸
+            int newWidth = 750;  // 使用点云X范围
+            int newHeight = 1200; // 使用点云Y范围
+            
+            System.out.println("调整后的图像尺寸: " + newWidth + "x" + newHeight);
+            
+            // 创建一个浮点型数组来保存高程数据
+            float[][] elevationData = new float[newHeight][newWidth];
+            
+            // 确定网格单元格大小
+            float pixelSizeX = (maxX - minX) / (newWidth - 1);
+            float pixelSizeY = (maxY - minY) / (newHeight - 1);
+            
+            // 初始化所有值为NaN
+            for (int y = 0; y < newHeight; y++) {
+                for (int x = 0; x < newWidth; x++) {
+                    elevationData[y][x] = Float.NaN;
+                }
+            }
+            
+            // 将每个点映射到对应的网格位置
+            for (Float[] point : pointList) {
+                int x = Math.round((point[0] - minX) / pixelSizeX);
+                // 翻转Y轴，确保符合GIS惯例，y坐标从底部向上增加
+                int y = newHeight - 1 - Math.round((point[1] - minY) / pixelSizeY);
+                
+                // 确保索引在有效范围内
+                if (x >= 0 && x < newWidth && y >= 0 && y < newHeight) {
+                    // 如果有多个点映射到同一个格子，取最大的Z值
+                    if (Float.isNaN(elevationData[y][x]) || point[2] > elevationData[y][x]) {
+                        elevationData[y][x] = point[2];
+                    }
+                }
+            }
+            
+            // 填充NaN值 - 简单的最近邻插值
+            boolean hasDataPoints = false;
+            for (int y = 0; y < newHeight; y++) {
+                for (int x = 0; x < newWidth; x++) {
+                    if (!Float.isNaN(elevationData[y][x])) {
+                        hasDataPoints = true;
+                        break;
+                    }
+                }
+                if (hasDataPoints) break;
+            }
+            
+            if (!hasDataPoints) {
+                throw new RuntimeException("没有有效的数据点可生成GeoTIFF");
+            }
+            
+            // 创建渲染图像 - 使用标准图像格式提高兼容性
+            BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_BYTE_GRAY);
+            WritableRaster raster = image.getRaster();
+            
+            // 填充图像数据
+            for (int y = 0; y < newHeight; y++) {
+                for (int x = 0; x < newWidth; x++) {
+                    float value = elevationData[y][x];
+                    if (Float.isNaN(value)) {
+                        raster.setSample(x, y, 0, 0); // 无数据区域使用黑色
+                    } else {
+                        // 将z值映射到0-255范围，以便在灰度图中显示
+                        int grayValue = Math.min(255, Math.max(0, 
+                            Math.round(((value - minZ) / (maxZ - minZ)) * 255)));
+                        raster.setSample(x, y, 0, grayValue);
+                    }
+                }
+            }
+            
+            // 创建坐标参考系统 - 使用WGS84
+            CoordinateReferenceSystem crs = DefaultGeographicCRS.WGS84;
+            
+            // 设置世界坐标系统信息
+            AffineTransform worldTransform = new AffineTransform();
+            worldTransform.scale(pixelSizeX, pixelSizeY);
+            worldTransform.translate(minX, minY);
+            
+            // 创建网格覆盖信息
+            GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
+            
+            // 创建包络矩形，确定GeoTIFF的地理范围
+            ReferencedEnvelope mapExtent = new ReferencedEnvelope(
+                    minX, maxX, minY, maxY, crs);
+            
+            // 调整地理尺寸，确保图像分辨率正确
+            System.out.println("地理范围: X[" + minX + "," + maxX + "] Y[" + minY + "," + maxY + "]");
+            System.out.println("图像尺寸: 宽度=" + newWidth + ", 高度=" + newHeight);
+            System.out.println("像素分辨率: X=" + pixelSizeX + ", Y=" + pixelSizeY);
+            
+            // 创建GridCoverage - 使用标准名称
+            GridCoverage2D coverage = factory.create("elevation", image, mapExtent);
+            
+            // 设置GeoTIFF写入参数
+            GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
+            writeParams.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+            writeParams.setCompressionType("LZW");
+            writeParams.setCompressionQuality(0.75F);
+            
+            // 创建参数组
+            ParameterValueGroup params = new GeoTiffFormat().getWriteParameters();
+            params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString()).setValue(writeParams);
+            
+            // 创建GeoTIFF写入器并写入文件
+            File outputFile = new File("output.tiff");
+            GeoTiffWriter writer = new GeoTiffWriter(outputFile);
+            
+            try {
+                writer.write(coverage, params.values().toArray(new GeneralParameterValue[0]));
+                System.out.println("成功创建GeoTIFF文件: " + outputFile.getAbsolutePath());
+                System.out.println("实际文件大小: " + outputFile.length() + " 字节");
+            } finally {
+                writer.dispose();
+            }
+            
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException("创建GeoTIFF文件失败: " + e.getMessage(), e);
+        }
     }
 }

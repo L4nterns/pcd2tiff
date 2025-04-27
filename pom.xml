@@ -49,12 +49,6 @@
         </dependency>
 
         <dependency>
-            <groupId>mil.nga</groupId>
-            <artifactId>tiff</artifactId>
-            <version>3.0.0</version>
-        </dependency>
-
-        <dependency>
             <groupId>org.geotools</groupId>
             <artifactId>gt-main</artifactId>
             <version>${geotools.version}</version>
