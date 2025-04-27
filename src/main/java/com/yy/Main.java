@@ -288,6 +288,18 @@ public class Main {
             v1[0] = v1[1];
             v1[1] = x;
         });
+
+        // 找出最大的x值
+        final float maxX = pointList.stream()
+                .map(point -> point[0])
+                .max(Float::compare)
+                .orElse(0f);
+        
+        // 翻转x轴：最大x变为0，0变为最大x
+        pointList.forEach(v1 -> {
+            // 翻转x坐标：新x = 最大x - 原x
+            v1[0] = maxX - v1[0];
+        });
     }
 
     /**
@@ -385,8 +397,8 @@ public class Main {
             // 使用原点经纬度为(119.6906, 39.92551)，将点云坐标(米)转换为经纬度
             // 约0.00001度 ≈ 1米
             // 恢复原始经纬度关系，但进行适当调整确保地理参考正确
-            double geoMinX = 119.6906 + minX * 0.00001; // 恢复最小经度
-            double geoMaxX = 119.6906 + maxX * 0.00001; // 恢复最大经度
+            double geoMinX = 119.6906 - minX * 0.00001; // 恢复最小经度
+            double geoMaxX = 119.6906 - maxX * 0.00001; // 恢复最大经度
             double geoMinY = 39.92551 + minY * 0.00001; // 最小纬度
             double geoMaxY = 39.92551 + maxY * 0.00001; // 最大纬度
 
