@@ -285,8 +285,8 @@ public class Main {
     }
     
     /**
-     * 创建简化版本的TIFF文件和世界文件（TFW）
-     * 这种方法不依赖GeoTools的复杂API，而是直接创建标准TIFF和世界文件
+     * 创建单个GeoTIFF文件，内嵌所有地理参考信息
+     * 适用于EPSG:4549坐标系，单位为米的点云数据
      */
     public static void createSimpleTiff(List<Float[]> pointList, int width, int height) {
         try {
@@ -307,22 +307,22 @@ public class Main {
                 maxZ = Math.max(maxZ, point[2]);
             }
             
-            System.out.println("点云数据范围: X[" + minX + ", " + maxX + "] Y[" + minY + ", " + maxY + "] Z[" + minZ + ", " + maxZ + "]");
+            System.out.println("点云数据范围(米): X[" + minX + ", " + maxX + "] Y[" + minY + ", " + maxY + "] Z[" + minZ + ", " + maxZ + "]");
             
-            // 确定合适的图像尺寸，使用点云数据的实际尺寸
-            int newWidth = 750;  // 使用点云X范围的近似值
-            int newHeight = 1200; // 使用点云Y范围的近似值
+            // 确定合适的图像尺寸
+            int newWidth = 750;  // 图像宽度
+            int newHeight = 1200; // 图像高度
             
-            System.out.println("调整后的图像尺寸: " + newWidth + "x" + newHeight);
+            System.out.println("图像尺寸: " + newWidth + "x" + newHeight);
             
-            // 创建一个简单的单波段栅格数据集，类似于DEM
+            // 创建高程数据数组
             float[][] elevationData = new float[newHeight][newWidth];
             
-            // 确定网格单元格大小
+            // 计算单元格大小(米/像素)
             float pixelSizeX = (maxX - minX) / (newWidth - 1);
             float pixelSizeY = (maxY - minY) / (newHeight - 1);
             
-            // 将点云数据映射到网格，首先将所有值初始化为NaN
+            // 初始化为NaN
             for (int y = 0; y < newHeight; y++) {
                 for (int x = 0; x < newWidth; x++) {
                     elevationData[y][x] = Float.NaN;
@@ -341,7 +341,7 @@ public class Main {
                 }
             }
             
-            // 创建TIFF图像 - 使用灰度图像
+            // 创建灰度图像
             BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_BYTE_GRAY);
             
             // 将高程数据映射到灰度值
@@ -351,15 +351,15 @@ public class Main {
                     int pixelValue;
                     
                     if (Float.isNaN(value)) {
-                        pixelValue = 255; // 无数据区域使用白色，让图像更明显
+                        pixelValue = 255; // 无数据区域使用白色
                     } else {
-                        // 反转映射，让高程较高的地方更亮
+                        // 映射高程值到灰度
                         pixelValue = Math.min(255, Math.max(0, 
                                 Math.round(((value - minZ) / (maxZ - minZ)) * 255)));
                         
-                        // 确保不会全黑，提高可见度
+                        // 确保可见度
                         if (pixelValue < 50) {
-                            pixelValue = 50; // 最暗也要有一定亮度
+                            pixelValue = 50; // 最暗不低于50
                         }
                     }
                     
@@ -367,19 +367,21 @@ public class Main {
                 }
             }
             
-            // 设置地理参考信息
-            // 定义WGS84坐标系
-            CoordinateReferenceSystem crs = CRS.decode("EPSG:4326", true);
+            // 设置坐标系统为CGCS2000
+            CoordinateReferenceSystem crs = CRS.decode("EPSG:4490", true);
             
-            // 设置地理边界 - 使用合理的地理范围
-            double geoMinX = 119.69060000000;
-            double geoMaxX = 119.69060000000 + 0.1; // 约0.1度的经度范围
-            double geoMinY = 39.94263056000;
-            double geoMaxY = 39.94263056000 + 0.1; // 约0.1度的纬度范围
+            // 经纬度范围设置 - EPSG:4490是经纬度坐标系
+            // 使用原点经纬度为(119.69008, 39.94245)，将点云坐标(米)转换为经纬度
+            // 约0.00001度 ≈ 1米
+            double geoMinX = 119.69008 + minX * 0.00001; // 最小经度
+            double geoMaxX = 119.69008 + maxX * 0.00001; // 最大经度
+            double geoMinY = 39.94245 + minY * 0.00001;  // 最小纬度
+            double geoMaxY = 39.94245 + maxY * 0.00001;  // 最大纬度
             
-            System.out.println("坐标系统: " + crs.getName().toString());
+            // 输出坐标信息
+            System.out.println("坐标系: " + crs.getName().toString());
             System.out.println("EPSG代码: " + CRS.lookupEpsgCode(crs, true));
-            System.out.println("地理范围: 经度[" + geoMinX + "," + geoMaxX + "] 纬度[" + geoMinY + "," + geoMaxY + "]");
+            System.out.println("经纬度范围: 经度[" + geoMinX + "," + geoMaxX + "] 纬度[" + geoMinY + "," + geoMaxY + "]");
             
             // 创建地理范围对象
             ReferencedEnvelope mapExtent = new ReferencedEnvelope(
@@ -402,7 +404,7 @@ public class Main {
             params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString())
                  .setValue(writeParams);
             
-            // 创建输出文件 
+            // 输出文件
             File outputFile = new File("sample.tif");
             
             // 写入GeoTIFF文件
@@ -411,7 +413,7 @@ public class Main {
                 writer.write(coverage, params.values().toArray(new GeneralParameterValue[0]));
                 System.out.println("成功创建GeoTIFF文件: " + outputFile.getAbsolutePath());
                 System.out.println("文件大小: " + outputFile.length() + " 字节");
-                System.out.println("\n文件已生成，包含所有必要的地理参考信息，可直接上传到GeoServer。");
+                System.out.println("文件已生成，设置为EPSG:4490坐标系(CGCS2000)");
             } finally {
                 writer.dispose();
             }
