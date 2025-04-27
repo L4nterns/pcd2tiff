@@ -342,9 +342,13 @@ public class Main {
                 }
             }
             
-            // 创建输出文件
-            String worldFileName = "output.tfw";
-            String outputFileName = "output.tif";
+            // 创建输出文件 - 确保文件名与预期的coverageName一致
+            // 参考：https://gis.stackexchange.com/questions/133115/geoserver-rest-api-bug-the-specified-coveragename-is-not-supported
+            String coverageName = "sample"; // 使用与GeoServer期望匹配的覆盖物名称
+            String worldFileName = coverageName + ".tfw";
+            String outputFileName = coverageName + ".tif";
+            
+            System.out.println("使用coverageName: " + coverageName);
             
             // 创建世界文件（TFW）- 包含地理参考信息
             try (PrintWriter writer = new PrintWriter(new FileWriter(worldFileName))) {
@@ -392,17 +396,71 @@ public class Main {
                 }
             }
             
-            // 保存TIFF文件
-            File outputFile = new File(outputFileName);
-            ImageIO.write(image, "TIFF", outputFile);
-            System.out.println("成功创建TIFF文件: " + outputFile.getAbsolutePath());
-            System.out.println("文件大小: " + outputFile.length() + " 字节");
+            // 步骤1: 保存基本TIFF文件
+            File tiffFile = new File(outputFileName);
+            ImageIO.write(image, "TIFF", tiffFile);
+            System.out.println("成功创建基本TIFF文件: " + tiffFile.getAbsolutePath());
+            System.out.println("文件大小: " + tiffFile.length() + " 字节");
             
-            // 告知用户如何使用这些文件
-            System.out.println("提示: 生成了两个文件:");
-            System.out.println("1. " + outputFileName + " - 包含图像数据");
-            System.out.println("2. " + worldFileName + " - 包含地理参考信息");
-            System.out.println("将这两个文件一起上传到GeoServer，应该可以被正确识别为地理参考数据。");
+            // 步骤2: 尝试创建GeoTIFF文件
+            try {
+                // 创建带GEO信息的TIFF文件
+                File geoTiffFile = new File(coverageName + "_geo.tif");
+                
+                // 设置坐标参考系统
+                CoordinateReferenceSystem crs = CRS.decode("EPSG:4326", true);
+                
+                // 设置地理边界
+                double geoMinX = 119.69060000000 + minX * 0.00001;
+                double geoMaxX = 119.69060000000 + maxX * 0.00001;
+                double geoMinY = 39.94263056000 + minY * 0.00001;
+                double geoMaxY = 39.94263056000 + maxY * 0.00001;
+                
+                // 创建地理范围
+                ReferencedEnvelope mapExtent = new ReferencedEnvelope(
+                        geoMinX, geoMaxX, geoMinY, geoMaxY, crs);
+                
+                // 创建网格覆盖对象
+                GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
+                GridCoverage2D coverage = factory.create(coverageName, image, mapExtent);
+                
+                // 设置GeoTIFF写入参数
+                GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
+                writeParams.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+                writeParams.setCompressionType("LZW");
+                writeParams.setCompressionQuality(0.75F);
+                writeParams.setTilingMode(GeoTiffWriteParams.MODE_EXPLICIT);
+                writeParams.setTiling(256, 256);
+                
+                // 创建GeoTIFF格式参数
+                ParameterValueGroup params = new GeoTiffFormat().getWriteParameters();
+                params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString())
+                     .setValue(writeParams);
+                
+                // 写入GeoTIFF文件
+                GeoTiffWriter writer = new GeoTiffWriter(geoTiffFile);
+                try {
+                    writer.write(coverage, params.values().toArray(new GeneralParameterValue[0]));
+                    System.out.println("成功创建GeoTIFF文件: " + geoTiffFile.getAbsolutePath());
+                    System.out.println("GeoTIFF文件大小: " + geoTiffFile.length() + " 字节");
+                } finally {
+                    writer.dispose();
+                }
+                
+                System.out.println("\n提示：已生成三个文件：");
+                System.out.println("1. " + tiffFile.getAbsolutePath() + " - 基本TIFF图像");
+                System.out.println("2. " + worldFileName + " - 世界文件，包含地理参考信息");
+                System.out.println("3. " + geoTiffFile.getAbsolutePath() + " - 完整GeoTIFF文件，内嵌地理参考");
+                System.out.println("请尝试将这些文件上传到GeoServer，看哪个能被正确识别。");
+                
+            } catch (Exception e) {
+                System.out.println("创建GeoTIFF文件失败: " + e.getMessage());
+                e.printStackTrace();
+                
+                System.out.println("\n提示：已生成基本文件：");
+                System.out.println("1. " + tiffFile.getAbsolutePath() + " - 基本TIFF图像");
+                System.out.println("2. " + worldFileName + " - 世界文件，包含地理参考信息");
+            }
             
         } catch (Exception e) {
             e.printStackTrace();
