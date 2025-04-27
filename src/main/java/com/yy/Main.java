@@ -366,28 +366,31 @@ public class Main {
                 }
             }
             
-            // 创建坐标参考系统 - 使用WGS84
-            CoordinateReferenceSystem crs = DefaultGeographicCRS.WGS84;
+            // 创建坐标参考系统 - 使用WGS84，EPSG:4326
+            CoordinateReferenceSystem crs = CRS.decode("EPSG:4326", true);
             
-            // 设置世界坐标系统信息
-            AffineTransform worldTransform = new AffineTransform();
-            worldTransform.scale(pixelSizeX, pixelSizeY);
-            worldTransform.translate(minX, minY);
+            // 计算实际地理坐标范围
+            // 用户提供的信息：原点(0,0)对应经度119.69060000000，纬度39.94263056000
+            // 使用这个原点信息将点云坐标变换为地理坐标
+            double geoMinX = 119.69060000000 + minX * 0.00001; // 设置合适的比例尺
+            double geoMaxX = 119.69060000000 + maxX * 0.00001;
+            double geoMinY = 39.94263056000 + minY * 0.00001;
+            double geoMaxY = 39.94263056000 + maxY * 0.00001;
             
-            // 创建网格覆盖信息
+            // 创建网格覆盖信息工厂
             GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
             
             // 创建包络矩形，确定GeoTIFF的地理范围
             ReferencedEnvelope mapExtent = new ReferencedEnvelope(
-                    minX, maxX, minY, maxY, crs);
+                    geoMinX, geoMaxX, geoMinY, geoMaxY, crs);
             
             // 调整地理尺寸，确保图像分辨率正确
-            System.out.println("地理范围: X[" + minX + "," + maxX + "] Y[" + minY + "," + maxY + "]");
+            System.out.println("原始范围: X[" + minX + "," + maxX + "] Y[" + minY + "," + maxY + "]");
+            System.out.println("地理范围: X[" + geoMinX + "," + geoMaxX + "] Y[" + geoMinY + "," + geoMaxY + "]");
             System.out.println("图像尺寸: 宽度=" + newWidth + ", 高度=" + newHeight);
-            System.out.println("像素分辨率: X=" + pixelSizeX + ", Y=" + pixelSizeY);
             
-            // 创建GridCoverage - 使用标准名称
-            GridCoverage2D coverage = factory.create("elevation", image, mapExtent);
+            // 创建GridCoverage - 使用GeoServer可识别的标准名称
+            GridCoverage2D coverage = factory.create("sample", image, mapExtent);
             
             // 设置GeoTIFF写入参数
             GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
