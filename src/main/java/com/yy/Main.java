@@ -247,7 +247,7 @@ public class Main {
         try {
             createTiff(pointList, width, height);
             // pointList.stream().forEach(v1 -> {
-            //     System.out.println(v1[0] + "," + v1[1] + "," + v1[2]);
+            // System.out.println(v1[0] + "," + v1[1] + "," + v1[2]);
             // });
             System.out.println("GeoTIFF file 'output.tif' created successfully.");
         } catch (Exception e) {
@@ -275,15 +275,21 @@ public class Main {
         }
     }
 
-    public static void createTif(List<Float> pointList, int width, int height) {
-        // 留空，保持与原始方法签名一致
-    }
-
     public static void createTiff(List<Float[]> pointList, int width, int height) {
+        handlePointList(pointList);
+
         // 调用简化版本的方法
         createSimpleTiff(pointList, width, height);
     }
-    
+
+    public static void handlePointList(List<Float[]> pointList) {
+        pointList.forEach(v1 -> {
+            Float x = v1[0];
+            v1[0] = v1[1];
+            v1[1] = x;
+        });
+    }
+
     /**
      * 创建单个GeoTIFF文件，内嵌所有地理参考信息
      * 适用于EPSG:4549坐标系，单位为米的点云数据
@@ -297,7 +303,7 @@ public class Main {
             float maxY = -Float.MAX_VALUE;
             float minZ = Float.MAX_VALUE;
             float maxZ = -Float.MAX_VALUE;
-            
+
             for (Float[] point : pointList) {
                 minX = Math.min(minX, point[0]);
                 maxX = Math.max(maxX, point[0]);
@@ -306,34 +312,36 @@ public class Main {
                 minZ = Math.min(minZ, point[2]);
                 maxZ = Math.max(maxZ, point[2]);
             }
-            
-            System.out.println("点云数据范围(米): X[" + minX + ", " + maxX + "] Y[" + minY + ", " + maxY + "] Z[" + minZ + ", " + maxZ + "]");
-            
+
+            System.out.println("点云数据范围(米): X[" + minX + ", " + maxX + "] Y[" + minY + ", " + maxY + "] Z[" + minZ + ", "
+                    + maxZ + "]");
+
             // 确定合适的图像尺寸
-            int newWidth = 750;  // 图像宽度
+            int newWidth = 750; // 图像宽度
             int newHeight = 1200; // 图像高度
-            
+
             System.out.println("图像尺寸: " + newWidth + "x" + newHeight);
-            
+
             // 创建高程数据数组
             float[][] elevationData = new float[newHeight][newWidth];
-            
+
             // 计算单元格大小(米/像素)
             float pixelSizeX = (maxX - minX) / (newWidth - 1);
             float pixelSizeY = (maxY - minY) / (newHeight - 1);
-            
+
             // 初始化为NaN
             for (int y = 0; y < newHeight; y++) {
                 for (int x = 0; x < newWidth; x++) {
                     elevationData[y][x] = Float.NaN;
                 }
             }
-            
+
             // 映射点云数据到网格
             for (Float[] point : pointList) {
+                // 恢复原始映射方式
                 int x = Math.round((point[0] - minX) / pixelSizeX);
                 int y = newHeight - 1 - Math.round((point[1] - minY) / pixelSizeY);
-                
+
                 if (x >= 0 && x < newWidth && y >= 0 && y < newHeight) {
                     if (Float.isNaN(elevationData[y][x]) || elevationData[y][x] < point[2]) {
                         elevationData[y][x] = point[2];
@@ -341,56 +349,60 @@ public class Main {
                 }
             }
             
+            // 填充缺失数据（处理横线问题）
+            fillMissingData(elevationData, newWidth, newHeight);
+
             // 创建灰度图像
             BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_BYTE_GRAY);
-            
+
             // 将高程数据映射到灰度值
             for (int y = 0; y < newHeight; y++) {
                 for (int x = 0; x < newWidth; x++) {
                     float value = elevationData[y][x];
                     int pixelValue;
-                    
+
                     if (Float.isNaN(value)) {
                         pixelValue = 255; // 无数据区域使用白色
                     } else {
                         // 映射高程值到灰度
-                        pixelValue = Math.min(255, Math.max(0, 
+                        pixelValue = Math.min(255, Math.max(0,
                                 Math.round(((value - minZ) / (maxZ - minZ)) * 255)));
-                        
+
                         // 确保可见度
                         if (pixelValue < 50) {
                             pixelValue = 50; // 最暗不低于50
                         }
                     }
-                    
+
                     image.getRaster().setSample(x, y, 0, pixelValue);
                 }
             }
-            
+
             // 设置坐标系统为CGCS2000
             CoordinateReferenceSystem crs = CRS.decode("EPSG:4490", true);
-            
+
             // 经纬度范围设置 - EPSG:4490是经纬度坐标系
-            // 使用原点经纬度为(119.69008, 39.94245)，将点云坐标(米)转换为经纬度
+            // 使用原点经纬度为(119.6906, 39.92551)，将点云坐标(米)转换为经纬度
             // 约0.00001度 ≈ 1米
-            double geoMinX = 119.69008 + minX * 0.00001; // 最小经度
-            double geoMaxX = 119.69008 + maxX * 0.00001; // 最大经度
-            double geoMinY = 39.94245 + minY * 0.00001;  // 最小纬度
-            double geoMaxY = 39.94245 + maxY * 0.00001;  // 最大纬度
-            
+            // 恢复原始经纬度关系，但进行适当调整确保地理参考正确
+            double geoMinX = 119.6906 + minX * 0.00001; // 恢复最小经度
+            double geoMaxX = 119.6906 + maxX * 0.00001; // 恢复最大经度
+            double geoMinY = 39.92551 + minY * 0.00001; // 最小纬度
+            double geoMaxY = 39.92551 + maxY * 0.00001; // 最大纬度
+
             // 输出坐标信息
             System.out.println("坐标系: " + crs.getName().toString());
             System.out.println("EPSG代码: " + CRS.lookupEpsgCode(crs, true));
             System.out.println("经纬度范围: 经度[" + geoMinX + "," + geoMaxX + "] 纬度[" + geoMinY + "," + geoMaxY + "]");
-            
-            // 创建地理范围对象
+
+            // 创建地理范围对象 - 确保方向正确
             ReferencedEnvelope mapExtent = new ReferencedEnvelope(
                     geoMinX, geoMaxX, geoMinY, geoMaxY, crs);
-            
+
             // 创建GridCoverage
             GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
             GridCoverage2D coverage = factory.create("sample", image, mapExtent);
-            
+
             // 设置GeoTIFF写入参数
             GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
             writeParams.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
@@ -398,15 +410,15 @@ public class Main {
             writeParams.setCompressionQuality(0.75F);
             writeParams.setTilingMode(GeoTiffWriteParams.MODE_EXPLICIT);
             writeParams.setTiling(256, 256);
-            
+
             // 创建GeoTIFF格式参数
             ParameterValueGroup params = new GeoTiffFormat().getWriteParameters();
             params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString())
-                 .setValue(writeParams);
-            
+                    .setValue(writeParams);
+
             // 输出文件
             File outputFile = new File("sample.tif");
-            
+
             // 写入GeoTIFF文件
             GeoTiffWriter writer = new GeoTiffWriter(outputFile);
             try {
@@ -417,10 +429,59 @@ public class Main {
             } finally {
                 writer.dispose();
             }
-            
+
         } catch (Exception e) {
             e.printStackTrace();
             throw new RuntimeException("创建GeoTIFF文件失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 填充缺失的数据点以消除横线
+     */
+    private static void fillMissingData(float[][] data, int width, int height) {
+        // 先进行横向填充
+        for (int y = 0; y < height; y++) {
+            fillRowGaps(data[y], width);
+        }
+        
+        // 再进行纵向填充
+        for (int x = 0; x < width; x++) {
+            float[] column = new float[height];
+            for (int y = 0; y < height; y++) {
+                column[y] = data[y][x];
+            }
+            
+            fillRowGaps(column, height);
+            
+            for (int y = 0; y < height; y++) {
+                data[y][x] = column[y];
+            }
+        }
+    }
+    
+    /**
+     * 填充一维数组中的缺失值
+     */
+    private static void fillRowGaps(float[] row, int length) {
+        int start = -1;
+        
+        // 查找并填充空隙
+        for (int i = 0; i < length; i++) {
+            if (!Float.isNaN(row[i])) {
+                if (start != -1) {
+                    // 找到了一个空隙的结束位置，进行插值填充
+                    float startValue = row[start];
+                    float endValue = row[i];
+                    float increment = (endValue - startValue) / (i - start);
+                    
+                    // 线性插值填充
+                    for (int j = start + 1; j < i; j++) {
+                        row[j] = startValue + increment * (j - start);
+                    }
+                }
+                start = i;
+            }
         }
     }
 }
