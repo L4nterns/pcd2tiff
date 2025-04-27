@@ -9,20 +9,22 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+
+import org.apache.commons.lang3.StringUtils;
 import org.geotools.coverage.CoverageFactoryFinder;
 import org.geotools.coverage.grid.GridCoverage2D;
+import org.geotools.coverage.grid.GridCoverageFactory;
 import org.geotools.coverage.grid.io.AbstractGridFormat;
 import org.geotools.gce.geotiff.GeoTiffFormat;
 import org.geotools.gce.geotiff.GeoTiffWriteParams;
 import org.geotools.gce.geotiff.GeoTiffWriter;
+import org.geotools.geometry.jts.ReferencedEnvelope;
 import org.geotools.referencing.CRS;
 import org.opengis.parameter.GeneralParameterValue;
 import org.opengis.parameter.ParameterValueGroup;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
-
-import javax.imageio.ImageIO;
-
-import static org.apache.commons.lang3.StringUtils.*;
 
 import lombok.Getter;
 import okhttp3.Call;
@@ -32,29 +34,14 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import static com.yy.Main.PcdPrefixEnum.*;
-import org.geotools.coverage.grid.GridCoverageFactory;
-import org.geotools.geometry.jts.ReferencedEnvelope;
-import javax.imageio.ImageWriteParam;
-
 public class Main {
 
     private static final OkHttpClient HTTP_CLIENT = new OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)
-            .connectionPool(new ConnectionPool(
-                    15,
-                    10,
-                    TimeUnit.MINUTES))
+            .connectionPool(new ConnectionPool(15, 10, TimeUnit.MINUTES))
             .build();
-
-    private ObjectMapper objectMapper;
-
-    public static void main(String[] args) throws IOException {
-        pcd2tiff();
-    }
 
     @Getter
     public enum PcdPrefixEnum {
@@ -77,110 +64,132 @@ public class Main {
         }
     }
 
+    public static void main(String[] args) throws IOException {
+        pcd2tiff();
+    }
+
     public static void pcd2tiff() {
+        String content = getPcdContent("http://localhost:999/files/output.pcd");
+        Pcd pcd = parsePcdData(content);
+
+        try {
+            prehandlePointList(pcd.pointList);
+
+            createGeoTiff(pcd.pointList);
+        } catch (Exception e) {
+            throw new RuntimeException("GeoTIFF文件创建失败");
+        }
+    }
+
+    private static String getPcdContent(String url) {
         Request request = new Request.Builder()
-                .url("http://localhost:999/files/output.pcd") // Replace with your PCD file source
+                .url(url)
                 .get()
                 .build();
 
         Call call = HTTP_CLIENT.newCall(request);
 
-        String content;
         try (Response response = call.execute()) {
             if (response.code() != 200) {
-                throw new RuntimeException("pcd文件读取失败: HTTP " + response.code());
+                throw new RuntimeException("pcd文件读取失败，请检查文件内容");
             }
 
             ResponseBody responseBody = response.body();
-            if (responseBody == null) {
-                throw new RuntimeException("pcd文件读取失败: Response body is null");
-            }
-
-            content = responseBody.string();
+            return responseBody.string();
         } catch (IOException e) {
-            throw new RuntimeException("pcd文件读取失败，请检查网络连接: " + e.getMessage(), e);
+            throw new RuntimeException("pcd文件读取失败，请检查网络连接");
+        }
+    }
+
+    private static class Pcd {
+        private String[] fields;
+        private int width;
+        private int height;
+        private int points;
+        private List<Float[]> pointList;
+
+        public String[] getFields() {
+            return fields;
         }
 
-        String[] fields = null; // Initialize to null
-        String[] sizes = null; // Initialize to null
-        String[] types = null; // Initialize to null
-        int width = 0;
-        int height = 0;
-        int points = 0; // Initialize to 0
-        List<Float[]> pointList = new ArrayList<>();
+        public int getWidth() {
+            return width;
+        }
 
-        boolean headerParsed = false; // Flag to indicate when header is done
+        public int getHeight() {
+            return height;
+        }
+
+        public int getPoints() {
+            return points;
+        }
+
+        public List<Float[]> getPointList() {
+            return pointList;
+        }
+    }
+
+    /**
+     * 解析pcd内容
+     * 
+     * @param content
+     * @param pointList
+     * @return
+     */
+    private static Pcd parsePcdData(String content) {
+        Pcd pcd = new Pcd();
+        pcd.pointList = new ArrayList<>();
+        boolean headerParsed = false;
 
         try (BufferedReader reader = new BufferedReader(new StringReader(content))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!headerParsed) {
-                    if (line.startsWith(COMMENT.getValue()) ||
-                            line.startsWith(VERSION.getValue()) ||
-                            line.startsWith(COUNT.getValue()) ||
-                            line.startsWith(VIEWPOINT.getValue())) {
+                    if (line.startsWith(PcdPrefixEnum.COMMENT.getValue()) ||
+                            line.startsWith(PcdPrefixEnum.VERSION.getValue()) ||
+                            line.startsWith(PcdPrefixEnum.COUNT.getValue()) ||
+                            line.startsWith(PcdPrefixEnum.TYPE.getValue()) ||
+                            line.startsWith(PcdPrefixEnum.SIZE.getValue()) ||
+                            line.startsWith(PcdPrefixEnum.VIEWPOINT.getValue())) {
                         continue;
-                    } else if (line.startsWith(FIELDS.getValue())) {
-                        fields = line.substring(FIELDS.getValue().length()).split(SPACE);
-                    } else if (line.startsWith(SIZE.getValue())) {
-                        sizes = line.substring(SIZE.getValue().length()).split(SPACE); // Corrected prefix
-                    } else if (line.startsWith(TYPE.getValue())) {
-                        types = line.substring(TYPE.getValue().length()).split(SPACE); // Corrected prefix
-                    } else if (line.startsWith(WIDTH.getValue())) {
-                        width = Integer.parseInt(line.substring(WIDTH.getValue().length()));
-                    } else if (line.startsWith(HEIGHT.getValue())) {
-                        height = Integer.parseInt(line.substring(HEIGHT.getValue().length()));
-                    } else if (line.startsWith(POINTS.getValue())) {
-                        points = Integer.parseInt(line.substring(POINTS.getValue().length()));
-                    } else if (line.startsWith(DATA.getValue())) {
-                        if (!line.equals(DATA.getValue() + "ascii")) {
+                    } else if (line.startsWith(PcdPrefixEnum.FIELDS.getValue())) {
+                        pcd.fields = line.substring(PcdPrefixEnum.FIELDS.getValue().length())
+                                .split(StringUtils.SPACE);
+                    } else if (line.startsWith(PcdPrefixEnum.WIDTH.getValue())) {
+                        pcd.width = Integer.parseInt(line.substring(PcdPrefixEnum.WIDTH.getValue().length()));
+                    } else if (line.startsWith(PcdPrefixEnum.HEIGHT.getValue())) {
+                        pcd.height = Integer.parseInt(line.substring(PcdPrefixEnum.HEIGHT.getValue().length()));
+                    } else if (line.startsWith(PcdPrefixEnum.POINTS.getValue())) {
+                        pcd.points = Integer.parseInt(line.substring(PcdPrefixEnum.POINTS.getValue().length()));
+                    } else if (line.startsWith(PcdPrefixEnum.DATA.getValue())) {
+                        if (!line.equals(PcdPrefixEnum.DATA.getValue() + "ascii")) {
                             throw new RuntimeException("当前仅支持ascii格式");
                         }
-                        headerParsed = true; // Header is done, next lines are points
-                    } else {
-                        // Handle potential blank lines or unexpected lines before data
-                        if (!line.trim().isEmpty()) {
-                            System.err.println("Skipping unexpected header line: " + line);
-                        }
+                        headerParsed = true;
                     }
                 } else {
-                    // Process point data lines
                     Float[] point = parsePoint(line);
-                    if (point != null && point.length >= 3) { // Ensure point has at least X, Y, Z
-                        pointList.add(point);
-                    } else {
-                        System.err.println("Skipping invalid point line: " + line);
+                    if (point != null && point.length >= 3) {
+                        pcd.pointList.add(point);
                     }
                 }
             }
         } catch (IOException e) {
-            // Should not happen with StringReader, but good practice to catch
-            System.err.println("Error reading point data: " + e.getMessage());
+            throw new RuntimeException("pcd数据解析失败");
         }
 
-        if (width <= 0 || height <= 0 || pointList.size() != width * height) {
-            System.err.println("Parsed points count (" + pointList.size() + ") does not match width (" + width
-                    + ") * height (" + height + ")");
-            throw new RuntimeException("PCD 文件头部信息不完整或点数据不匹配");
+        if (pcd.width <= 0 || pcd.height <= 0 || pcd.pointList.size() != pcd.width * pcd.height) {
+            throw new RuntimeException("pcd数据解析失败，请检查文件格式");
         }
 
-        try {
-            handlePointList(pointList);
-            createTiff(pointList, width, height);
-            System.out.println("GeoTIFF file 'output.tif' created successfully.");
-        } catch (Exception e) {
-            System.err.println("Error creating GeoTIFF: " + e.getMessage());
-            e.printStackTrace();
-            throw new RuntimeException("GeoTIFF文件创建失败", e);
-        }
+        return pcd;
     }
 
-    public static Float[] parsePoint(String line) {
+    private static Float[] parsePoint(String line) {
         if (line == null || line.trim().isEmpty()) {
-            return null; // Skip empty lines
+            return null;
         }
         try {
-            // Split by one or more spaces
             String[] parts = line.trim().split("\\s+");
             Float[] point = new Float[parts.length];
             for (int i = 0; i < parts.length; i++) {
@@ -188,34 +197,40 @@ public class Main {
             }
             return point;
         } catch (NumberFormatException e) {
-            System.err.println("Error parsing point coordinates from line: " + line + " - " + e.getMessage());
-            return null; // Return null for invalid lines
+            throw new RuntimeException("解析点坐标失败");
         }
     }
 
-    public static void handlePointList(List<Float[]> pointList) {
+    /**
+     * 预处理点云数据
+     * 
+     * @param pointList
+     */
+    public static void prehandlePointList(List<Float[]> pointList) {
+        // 交换x和y
         pointList.forEach(v1 -> {
             Float x = v1[0];
             v1[0] = v1[1];
             v1[1] = x;
         });
 
-        // 找出最大的x值
+        // 翻转x
         final float maxX = pointList.stream()
                 .map(point -> point[0])
                 .max(Float::compare)
                 .orElse(0f);
-
-        // 翻转x轴：最大x变为0，0变为最大x
         pointList.forEach(v1 -> {
-            // 翻转x坐标：新x = 最大x - 原x
             v1[0] = maxX - v1[0];
         });
     }
 
-    public static void createTiff(List<Float[]> pointList, int width, int height) {
+    /**
+     * 创建geotiff
+     * 
+     * @param pointList
+     */
+    public static void createGeoTiff(List<Float[]> pointList) {
         try {
-            // 查找点云数据的实际范围
             float minX = Float.MAX_VALUE;
             float maxX = -Float.MAX_VALUE;
             float minY = Float.MAX_VALUE;
@@ -232,25 +247,20 @@ public class Main {
                 maxZ = Math.max(maxZ, point[2]);
             }
 
-            System.out.println("点云数据范围(米): X[" + minX + ", " + maxX + "] Y[" + minY + ", " + maxY + "] Z[" + minZ + ", "
-                    + maxZ + "]");
+            int width = (int) (maxX - minX);
+            int height = (int) (maxY - minY);
+            System.out.println("图像尺寸: " + width + "x" + height);
 
-            // 确定合适的图像尺寸
-            int newWidth = 750; // 图像宽度
-            int newHeight = 1200; // 图像高度
+            // 创建高程数据网格
+            float[][] elevationData = new float[height][width];
 
-            System.out.println("图像尺寸: " + newWidth + "x" + newHeight);
-
-            // 创建高程数据数组
-            float[][] elevationData = new float[newHeight][newWidth];
-
-            // 计算单元格大小(米/像素)
-            float pixelSizeX = (maxX - minX) / (newWidth - 1);
-            float pixelSizeY = (maxY - minY) / (newHeight - 1);
+            // 计算像素大小（米/像素）
+            float pixelSizeX = (maxX - minX) / (width - 1);
+            float pixelSizeY = (maxY - minY) / (height - 1);
 
             // 初始化为NaN
-            for (int y = 0; y < newHeight; y++) {
-                for (int x = 0; x < newWidth; x++) {
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
                     elevationData[y][x] = Float.NaN;
                 }
             }
@@ -259,9 +269,9 @@ public class Main {
             for (Float[] point : pointList) {
                 // 恢复原始映射方式
                 int x = Math.round((point[0] - minX) / pixelSizeX);
-                int y = newHeight - 1 - Math.round((point[1] - minY) / pixelSizeY);
+                int y = height - 1 - Math.round((point[1] - minY) / pixelSizeY);
 
-                if (x >= 0 && x < newWidth && y >= 0 && y < newHeight) {
+                if (x >= 0 && x < width && y >= 0 && y < height) {
                     if (Float.isNaN(elevationData[y][x]) || elevationData[y][x] < point[2]) {
                         elevationData[y][x] = point[2];
                     }
@@ -269,14 +279,14 @@ public class Main {
             }
 
             // 填充缺失数据（处理横线问题）
-            fillMissingData(elevationData, newWidth, newHeight);
+            fillMissingData(elevationData, width, height);
 
-            // 创建带透明通道的图像，而不是灰度图
-            BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_ARGB);
+            // 创建带透明通道的图像
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
 
             // 将高程数据映射到颜色值
-            for (int y = 0; y < newHeight; y++) {
-                for (int x = 0; x < newWidth; x++) {
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
                     float value = elevationData[y][x];
 
                     if (Float.isNaN(value)) {
@@ -306,23 +316,18 @@ public class Main {
                 }
             }
 
-            // 尝试先保存为PNG，保留透明度
+            // 处理图像以保留透明度
             try {
                 File pngFile = new File("temp.png");
                 ImageIO.write(image, "PNG", pngFile);
-
-                // 重新加载图像，保留透明度
                 image = ImageIO.read(pngFile);
-
-                // 临时文件使用完毕后删除
                 pngFile.delete();
             } catch (IOException e) {
                 System.err.println("无法创建临时PNG文件: " + e.getMessage());
-                // 继续使用原始图像
             }
 
             // 转换为GeoTIFF支持的格式
-            BufferedImage finalImage = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_4BYTE_ABGR);
+            BufferedImage finalImage = new BufferedImage(width, height, BufferedImage.TYPE_4BYTE_ABGR);
             finalImage.createGraphics().drawImage(image, 0, 0, null);
 
             // 设置坐标系统为CGCS2000
