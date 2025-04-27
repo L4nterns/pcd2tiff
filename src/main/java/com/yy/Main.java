@@ -325,10 +325,6 @@ public class Main {
 
             CoordinateReferenceSystem crs = CRS.decode("EPSG:4490", true);
 
-            // 经纬度范围设置 - EPSG:4490是经纬度坐标系
-            // 使用原点经纬度为(119.6906, 39.92551)，将点云坐标(米)转换为经纬度
-            // 约0.00001度 ≈ 1米
-            // 恢复原始经纬度关系，但进行适当调整确保地理参考正确
             double minLon = 119.6906 - minX * 0.00001;
             double maxLon = 119.6906 - maxX * 0.00001;
             double minLat = 39.92551 + minY * 0.00001;
@@ -345,7 +341,7 @@ public class Main {
             GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
             writeParams.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
             writeParams.setCompressionType("LZW");
-            writeParams.setCompressionQuality(0.75F);
+            writeParams.setCompressionQuality(1F);
             writeParams.setTilingMode(GeoTiffWriteParams.MODE_EXPLICIT);
             writeParams.setTiling(256, 256);
 
@@ -361,16 +357,13 @@ public class Main {
             GeoTiffWriter writer = new GeoTiffWriter(outputFile);
             try {
                 writer.write(coverage, params.values().toArray(new GeneralParameterValue[0]));
-                System.out.println("成功创建GeoTIFF文件: " + outputFile.getAbsolutePath());
-                System.out.println("文件大小: " + outputFile.length() + " 字节");
-                System.out.println("文件已生成，设置为EPSG:4490坐标系(CGCS2000)");
             } finally {
                 writer.dispose();
             }
 
         } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("创建GeoTIFF文件失败: " + e.getMessage(), e);
+            throw new RuntimeException("创建GeoTIFF文件失败");
         }
     }
 
