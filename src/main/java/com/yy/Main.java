@@ -294,7 +294,7 @@ public class Main {
                 .map(point -> point[0])
                 .max(Float::compare)
                 .orElse(0f);
-        
+
         // 翻转x轴：最大x变为0，0变为最大x
         pointList.forEach(v1 -> {
             // 翻转x坐标：新x = 最大x - 原x
@@ -360,35 +360,63 @@ public class Main {
                     }
                 }
             }
-            
+
             // 填充缺失数据（处理横线问题）
             fillMissingData(elevationData, newWidth, newHeight);
 
-            // 创建灰度图像
-            BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_BYTE_GRAY);
+            // 创建带透明通道的图像，而不是灰度图
+            BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_ARGB);
 
-            // 将高程数据映射到灰度值
+            // 将高程数据映射到颜色值
             for (int y = 0; y < newHeight; y++) {
                 for (int x = 0; x < newWidth; x++) {
                     float value = elevationData[y][x];
-                    int pixelValue;
 
                     if (Float.isNaN(value)) {
-                        pixelValue = 255; // 无数据区域使用白色
+                        // 空白区域设为透明
+                        image.setRGB(x, y, 0x00000000); // 完全透明 (alpha=0)
                     } else {
-                        // 映射高程值到灰度
-                        pixelValue = Math.min(255, Math.max(0,
+                        // 高程越大越黑，同时高程越低越透明
+                        
+                        // 灰度值：高程越高越黑
+                        int grayValue = 255 - Math.min(255, Math.max(0,
                                 Math.round(((value - minZ) / (maxZ - minZ)) * 255)));
-
+                        
                         // 确保可见度
-                        if (pixelValue < 50) {
-                            pixelValue = 50; // 最暗不低于50
+                        if (grayValue > 205) {
+                            grayValue = 205; // 最亮不超过205
                         }
+                        
+                        // 透明度：高程越低越透明
+                        // 将高程从0-100%映射到30-255的alpha值（最低处至少30%不透明度）
+                        int alphaValue = 30 + Math.min(225, Math.max(0,
+                                Math.round(((value - minZ) / (maxZ - minZ)) * 225)));
+                        
+                        // 创建带有高程相关透明度的颜色 (ARGB格式)
+                        int argb = (alphaValue << 24) | (grayValue << 16) | (grayValue << 8) | grayValue;
+                        image.setRGB(x, y, argb);
                     }
-
-                    image.getRaster().setSample(x, y, 0, pixelValue);
                 }
             }
+
+            // 尝试先保存为PNG，保留透明度
+            try {
+                File pngFile = new File("temp.png");
+                ImageIO.write(image, "PNG", pngFile);
+
+                // 重新加载图像，保留透明度
+                image = ImageIO.read(pngFile);
+
+                // 临时文件使用完毕后删除
+                pngFile.delete();
+            } catch (IOException e) {
+                System.err.println("无法创建临时PNG文件: " + e.getMessage());
+                // 继续使用原始图像
+            }
+
+            // 转换为GeoTIFF支持的格式
+            BufferedImage finalImage = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_4BYTE_ABGR);
+            finalImage.createGraphics().drawImage(image, 0, 0, null);
 
             // 设置坐标系统为CGCS2000
             CoordinateReferenceSystem crs = CRS.decode("EPSG:4490", true);
@@ -413,7 +441,7 @@ public class Main {
 
             // 创建GridCoverage
             GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
-            GridCoverage2D coverage = factory.create("sample", image, mapExtent);
+            GridCoverage2D coverage = factory.create("sample", finalImage, mapExtent);
 
             // 设置GeoTIFF写入参数
             GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
@@ -456,28 +484,28 @@ public class Main {
         for (int y = 0; y < height; y++) {
             fillRowGaps(data[y], width);
         }
-        
+
         // 再进行纵向填充
         for (int x = 0; x < width; x++) {
             float[] column = new float[height];
             for (int y = 0; y < height; y++) {
                 column[y] = data[y][x];
             }
-            
+
             fillRowGaps(column, height);
-            
+
             for (int y = 0; y < height; y++) {
                 data[y][x] = column[y];
             }
         }
     }
-    
+
     /**
      * 填充一维数组中的缺失值
      */
     private static void fillRowGaps(float[] row, int length) {
         int start = -1;
-        
+
         // 查找并填充空隙
         for (int i = 0; i < length; i++) {
             if (!Float.isNaN(row[i])) {
@@ -486,7 +514,7 @@ public class Main {
                     float startValue = row[start];
                     float endValue = row[i];
                     float increment = (endValue - startValue) / (i - start);
-                    
+
                     // 线性插值填充
                     for (int j = start + 1; j < i; j++) {
                         row[j] = startValue + increment * (j - start);
