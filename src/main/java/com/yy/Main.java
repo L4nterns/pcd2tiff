@@ -1,7 +1,7 @@
 package com.yy;
 
-import static org.apache.commons.lang3.StringUtils.EMPTY;
 import static org.apache.commons.lang3.StringUtils.SPACE;
+import static com.yy.Main.PcdMetadataPrefixEnum.*;
 
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
@@ -11,13 +11,11 @@ import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
 
-import org.apache.commons.lang3.StringUtils;
 import org.geotools.coverage.CoverageFactoryFinder;
 import org.geotools.coverage.grid.GridCoverage2D;
 import org.geotools.coverage.grid.GridCoverageFactory;
@@ -41,6 +39,19 @@ import okhttp3.ResponseBody;
 
 public class Main {
 
+    private static final String PCD_URL = "http://localhost:999/files/output.pcd";
+
+    private static final String OUTPUT_TIFF_PATH = "./sample.tiff";
+
+    private static final float MIN_LON = 119.6906F;
+    private static final float MIN_LAT = 39.92551F;
+
+    private static final float LON_OFFSET = -0.001F;
+    private static final float LAT_OFFSET = 0F;
+
+    private static final float WIDTH_SCALE = 1F;
+    private static final float HEIGHT_SCALE = 0.89F;
+
     private static final OkHttpClient HTTP_CLIENT = new OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
@@ -49,7 +60,7 @@ public class Main {
             .build();
 
     @Getter
-    public enum PcdPrefixEnum {
+    public enum PcdMetadataPrefixEnum {
         COMMENT("#"),
         VERSION("VERSION "),
         FIELDS("FIELDS "),
@@ -64,7 +75,7 @@ public class Main {
 
         private final String value;
 
-        PcdPrefixEnum(String value) {
+        PcdMetadataPrefixEnum(String value) {
             this.value = value;
         }
     }
@@ -75,7 +86,7 @@ public class Main {
 
     public static void pcd2tiff() {
         Request request = new Request.Builder()
-                .url("http://localhost:999/files/output.pcd")
+                .url(PCD_URL)
                 .get()
                 .build();
 
@@ -99,7 +110,7 @@ public class Main {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!headerParsed) {
-                    if (line.startsWith(PcdPrefixEnum.DATA.getValue())) {
+                    if (line.startsWith(DATA.getValue())) {
                         headerParsed = true;
                     }
                 } else {
@@ -141,6 +152,11 @@ public class Main {
         points.forEach(v1 -> {
             v1[0] = maxX - v1[0];
         });
+
+        points.forEach(v1 -> {
+            v1[0] = v1[0] * WIDTH_SCALE;
+            v1[1] = v1[1] * HEIGHT_SCALE;
+        });
     }
 
     /**
@@ -166,34 +182,37 @@ public class Main {
                 maxZ = Math.max(maxZ, point[2]);
             }
 
-            int width = (int) (maxX - minX);
-            int height = (int) (maxY - minY);
+            int newWidth = (int) (maxX - minX);
+            int newHeight = (int) (maxY - minY);
 
-            float[][] elevationData = new float[height][width];
+            float[][] elevationData = new float[newHeight][newWidth];
 
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
+            float pixelSizeX = (maxX - minX) / (newWidth - 1);
+            float pixelSizeY = (maxY - minY) / (newHeight - 1);
+
+            for (int y = 0; y < newHeight; y++) {
+                for (int x = 0; x < newWidth; x++) {
                     elevationData[y][x] = Float.NaN;
                 }
             }
 
             for (Float[] point : points) {
-                int x = Math.round(point[0] - minX);
-                int y = height - 1 - Math.round(point[1] - minY);
+                int x = Math.round((point[0] - minX) / pixelSizeX);
+                int y = newHeight - 1 - Math.round((point[1] - minY) / pixelSizeY);
 
-                if (x >= 0 && x < width && y >= 0 && y < height) {
+                if (x >= 0 && x < newWidth && y >= 0 && y < newHeight) {
                     if (Float.isNaN(elevationData[y][x]) || elevationData[y][x] < point[2]) {
                         elevationData[y][x] = point[2];
                     }
                 }
             }
 
-            fillMissingData(elevationData, width, height);
+            fillMissingData(elevationData, newWidth, newHeight);
 
-            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_ARGB);
 
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
+            for (int y = 0; y < newHeight; y++) {
+                for (int x = 0; x < newWidth; x++) {
                     float value = elevationData[y][x];
 
                     if (Float.isNaN(value)) {
@@ -223,15 +242,15 @@ public class Main {
                 throw new RuntimeException("无法创建临时PNG文件");
             }
 
-            BufferedImage finalImage = new BufferedImage(width, height, BufferedImage.TYPE_4BYTE_ABGR);
+            BufferedImage finalImage = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_4BYTE_ABGR);
             finalImage.createGraphics().drawImage(image, 0, 0, null);
 
             CoordinateReferenceSystem crs = CRS.decode("EPSG:4490", true);
 
-            double minLon = 119.6906 - minX * 0.00001;
-            double maxLon = 119.6906 - maxX * 0.00001;
-            double minLat = 39.92551 + minY * 0.00001;
-            double maxLat = 39.92551 + maxY * 0.00001;
+            double minLon = MIN_LON + LON_OFFSET - minX * 0.00001;
+            double maxLon = MIN_LON + LON_OFFSET - maxX * 0.00001;
+            double minLat = MIN_LAT + LAT_OFFSET + minY * 0.00001;
+            double maxLat = MIN_LAT + LAT_OFFSET + maxY * 0.00001;
 
             ReferencedEnvelope mapExtent = new ReferencedEnvelope(
                     minLon, maxLon, minLat, maxLat, crs);
@@ -250,7 +269,7 @@ public class Main {
             params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString())
                     .setValue(writeParams);
 
-            File outputFile = new File("sample.tiff");
+            File outputFile = new File(OUTPUT_TIFF_PATH);
 
             GeoTiffWriter writer = new GeoTiffWriter(outputFile);
             try {
