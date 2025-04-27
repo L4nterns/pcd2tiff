@@ -232,6 +232,9 @@ public class Main {
 
         try {
             createTiff(pointList, width, height);
+            pointList.stream().forEach(v1 -> {
+                System.out.println(v1[0] + "," + v1[1] + "," + v1[2]);
+            });
             System.out.println("GeoTIFF file 'output.tif' created successfully.");
         } catch (Exception e) {
             System.err.println("Error creating GeoTIFF: " + e.getMessage());
@@ -280,16 +283,22 @@ public class Main {
                 float x = point[0];
                 float y = point[1];
                 float z = point[2];
-                
-                if (x < minX) minX = x;
-                if (x > maxX) maxX = x;
-                if (y < minY) minY = y;
-                if (y > maxY) maxY = y;
-                if (z < minZ) minZ = z;
-                if (z > maxZ) maxZ = z;
+
+                if (x < minX)
+                    minX = x;
+                if (x > maxX)
+                    maxX = x;
+                if (y < minY)
+                    minY = y;
+                if (y > maxY)
+                    maxY = y;
+                if (z < minZ)
+                    minZ = z;
+                if (z > maxZ)
+                    maxZ = z;
             }
         }
-        
+
         System.out.println("X范围: [" + minX + ", " + maxX + "]");
         System.out.println("Y范围: [" + minY + ", " + maxY + "]");
         System.out.println("Z范围: [" + minZ + ", " + maxZ + "]");
@@ -342,34 +351,34 @@ public class Main {
         wp.setCompressionType("LZW");
         wp.setTilingMode(ImageWriteParam.MODE_EXPLICIT);
         wp.setTiling(256, 256);
-        
+
         ParameterValueGroup params = format.getWriteParameters();
         if (params == null) {
             throw new RuntimeException("无法获取GeoTIFF写入参数");
         }
-        
+
         // 设置必要的参数
         params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString()).setValue(wp);
-        
+
         // 设置压缩参数
         wp.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
         wp.setCompressionType("LZW");
         wp.setCompressionQuality(0.75f);
-        
+
         // 设置分块参数
         wp.setTilingMode(ImageWriteParam.MODE_EXPLICIT);
         wp.setTiling(256, 256);
-        
+
         System.out.println("GeoTIFF写入参数已配置：");
         System.out.println("  Compression: " + wp.getCompressionType());
         System.out.println("  Tile size: " + wp.getTileWidth() + "x" + wp.getTileHeight());
-        
+
         GeneralParameterValue[] writeParameters = params.values().toArray(new GeneralParameterValue[1]);
-        
+
         if (writeParameters == null || writeParameters.length == 0) {
             throw new RuntimeException("GeoTIFF写入参数为空");
         }
-        
+
         System.out.println("GeoTIFF写入参数已成功设置");
 
         // gridCoverage
@@ -382,7 +391,7 @@ public class Main {
             writer = new GeoTiffWriter(outputFile);
             // 创建图像覆盖
             GridCoverage2D coverage = createGridCoverage(image);
-            
+
             // 写入文件
             writer.write(coverage, writeParameters);
             System.out.println("文件大小: " + outputFile.length() + " bytes");
@@ -404,10 +413,10 @@ public class Main {
     private static GridCoverage2D createGridCoverage(BufferedImage image) {
         // 转换为灰度图像
         BufferedImage grayImage = new BufferedImage(
-            image.getWidth(),
-            image.getHeight(),
-            BufferedImage.TYPE_BYTE_GRAY);
-        
+                image.getWidth(),
+                image.getHeight(),
+                BufferedImage.TYPE_BYTE_GRAY);
+
         Graphics g = grayImage.getGraphics();
         g.drawImage(image, 0, 0, null);
         g.dispose();
@@ -433,22 +442,22 @@ public class Main {
 
         // 创建Envelope
         ReferencedEnvelope envelope = new ReferencedEnvelope(
-            0, grayImage.getWidth(),
-            0, grayImage.getHeight(),
-            crs);
+                0, grayImage.getWidth(),
+                0, grayImage.getHeight(),
+                crs);
 
         // 创建GridGeometry
         GridGeometry2D gridGeometry = new GridGeometry2D(
-            new GeneralGridEnvelope(new Rectangle(0, 0, grayImage.getWidth(), grayImage.getHeight())),
-            envelope);
+                new GeneralGridEnvelope(new Rectangle(0, 0, grayImage.getWidth(), grayImage.getHeight())),
+                envelope);
 
         // 创建并返回GridCoverage2D
         return factory.create(
-            "elevation",
-            grayImage,
-            gridGeometry,
-            new GridSampleDimension[]{sampleDimension},
-            null,
-            properties);
+                "elevation",
+                grayImage,
+                gridGeometry,
+                new GridSampleDimension[] { sampleDimension },
+                null,
+                properties);
     }
 }
