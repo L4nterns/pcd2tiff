@@ -249,14 +249,9 @@ public class Main {
 
             int width = (int) (maxX - minX);
             int height = (int) (maxY - minY);
-            System.out.println("图像尺寸: " + width + "x" + height);
 
             // 创建高程数据网格
             float[][] elevationData = new float[height][width];
-
-            // 计算像素大小（米/像素）
-            float pixelSizeX = (maxX - minX) / (width - 1);
-            float pixelSizeY = (maxY - minY) / (height - 1);
 
             // 初始化为NaN
             for (int y = 0; y < height; y++) {
@@ -268,8 +263,8 @@ public class Main {
             // 映射点云数据到网格
             for (Float[] point : pointList) {
                 // 恢复原始映射方式
-                int x = Math.round((point[0] - minX) / pixelSizeX);
-                int y = height - 1 - Math.round((point[1] - minY) / pixelSizeY);
+                int x = Math.round(point[0] - minX);
+                int y = height - 1 - Math.round(point[1] - minY);
 
                 if (x >= 0 && x < width && y >= 0 && y < height) {
                     if (Float.isNaN(elevationData[y][x]) || elevationData[y][x] < point[2]) {
@@ -278,7 +273,6 @@ public class Main {
                 }
             }
 
-            // 填充缺失数据（处理横线问题）
             fillMissingData(elevationData, width, height);
 
             // 创建带透明通道的图像
@@ -323,33 +317,25 @@ public class Main {
                 image = ImageIO.read(pngFile);
                 pngFile.delete();
             } catch (IOException e) {
-                System.err.println("无法创建临时PNG文件: " + e.getMessage());
+                System.err.println("无法创建临时PNG文件");
             }
 
-            // 转换为GeoTIFF支持的格式
             BufferedImage finalImage = new BufferedImage(width, height, BufferedImage.TYPE_4BYTE_ABGR);
             finalImage.createGraphics().drawImage(image, 0, 0, null);
 
-            // 设置坐标系统为CGCS2000
             CoordinateReferenceSystem crs = CRS.decode("EPSG:4490", true);
 
             // 经纬度范围设置 - EPSG:4490是经纬度坐标系
             // 使用原点经纬度为(119.6906, 39.92551)，将点云坐标(米)转换为经纬度
             // 约0.00001度 ≈ 1米
             // 恢复原始经纬度关系，但进行适当调整确保地理参考正确
-            double geoMinX = 119.6906 - minX * 0.00001; // 恢复最小经度
-            double geoMaxX = 119.6906 - maxX * 0.00001; // 恢复最大经度
-            double geoMinY = 39.92551 + minY * 0.00001; // 最小纬度
-            double geoMaxY = 39.92551 + maxY * 0.00001; // 最大纬度
+            double minLon = 119.6906 - minX * 0.00001;
+            double maxLon = 119.6906 - maxX * 0.00001;
+            double minLat = 39.92551 + minY * 0.00001;
+            double maxLat = 39.92551 + maxY * 0.00001;
 
-            // 输出坐标信息
-            System.out.println("坐标系: " + crs.getName().toString());
-            System.out.println("EPSG代码: " + CRS.lookupEpsgCode(crs, true));
-            System.out.println("经纬度范围: 经度[" + geoMinX + "," + geoMaxX + "] 纬度[" + geoMinY + "," + geoMaxY + "]");
-
-            // 创建地理范围对象 - 确保方向正确
             ReferencedEnvelope mapExtent = new ReferencedEnvelope(
-                    geoMinX, geoMaxX, geoMinY, geoMaxY, crs);
+                    minLon, maxLon, minLat, maxLat, crs);
 
             // 创建GridCoverage
             GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
