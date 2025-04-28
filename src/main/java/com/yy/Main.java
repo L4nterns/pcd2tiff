@@ -1,7 +1,6 @@
 package com.yy;
 
 import static org.apache.commons.lang3.StringUtils.SPACE;
-import static com.yy.Main.PcdMetadataPrefixEnum.*;
 
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
@@ -13,7 +12,6 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
-import javax.imageio.ImageIO;
 import javax.imageio.ImageWriteParam;
 
 import org.geotools.coverage.CoverageFactoryFinder;
@@ -29,7 +27,6 @@ import org.opengis.parameter.GeneralParameterValue;
 import org.opengis.parameter.ParameterValueGroup;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 
-import lombok.Getter;
 import okhttp3.Call;
 import okhttp3.ConnectionPool;
 import okhttp3.OkHttpClient;
@@ -41,17 +38,6 @@ public class Main {
 
     private static final String PCD_URL = "http://localhost:999/files/output.pcd";
 
-    private static final String OUTPUT_TIFF_PATH = "./sample.tiff";
-
-    private static final float MIN_LON = 119.6906F;
-    private static final float MIN_LAT = 39.92551F;
-
-    private static final float LON_OFFSET = -0.001F;
-    private static final float LAT_OFFSET = 0F;
-
-    private static final float WIDTH_SCALE = 1F;
-    private static final float HEIGHT_SCALE = 0.89F;
-
     private static final OkHttpClient HTTP_CLIENT = new OkHttpClient.Builder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
@@ -59,32 +45,31 @@ public class Main {
             .connectionPool(new ConnectionPool(1, 1, TimeUnit.MINUTES))
             .build();
 
-    @Getter
-    public enum PcdMetadataPrefixEnum {
-        COMMENT("#"),
-        VERSION("VERSION "),
-        FIELDS("FIELDS "),
-        SIZE("SIZE "),
-        TYPE("TYPE "),
-        COUNT("COUNT "),
-        WIDTH("WIDTH "),
-        HEIGHT("HEIGHT "),
-        VIEWPOINT("VIEWPOINT "),
-        POINTS("POINTS "),
-        DATA("DATA ");
+    private static final float WIDTH_SCALE = 1F; // 垛位横向缩放比例
+    private static final float HEIGHT_SCALE = 0.89F; // 垛位纵向缩放比例
+    private static final float LON_OFFSET = -0.0007F; // 整体垛位横向偏移量
+    private static final float LAT_OFFSET = 0F; // 整体垛位纵向偏移量
 
-        private final String value;
+    private static final float MIN_LON = 119.6906F;
+    private static final float MIN_LAT = 39.92551F;
 
-        PcdMetadataPrefixEnum(String value) {
-            this.value = value;
-        }
-    }
+    private static final String OUTPUT_TIFF_PATH = System.getProperty("java.io.tmpdir") + "sample.tiff";
 
     public static void main(String[] args) {
         pcd2tiff();
     }
 
     public static void pcd2tiff() {
+        String content = getPcdContent();
+
+        List<Float[]> points = parsePcdPoints(content);
+
+        prehandlePoints(points);
+
+        createTiff(points);
+    }
+
+    public static String getPcdContent() {
         Request request = new Request.Builder()
                 .url(PCD_URL)
                 .get()
@@ -95,7 +80,7 @@ public class Main {
         String content;
         try (Response response = call.execute()) {
             if (response.code() != 200) {
-                throw new RuntimeException("pcd文件读取失败，请检查文件内容");
+                throw new RuntimeException("pcd文件获取失败");
             }
 
             ResponseBody responseBody = response.body();
@@ -104,40 +89,34 @@ public class Main {
             throw new RuntimeException("pcd文件读取失败，请检查网络连接");
         }
 
+        return content;
+    }
+
+    public static List<Float[]> parsePcdPoints(String content) {
         List<Float[]> points = new ArrayList<>();
+
         boolean headerParsed = false;
         try (BufferedReader reader = new BufferedReader(new StringReader(content))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (!headerParsed) {
-                    if (line.startsWith(DATA.getValue())) {
+                    if (line.startsWith("DATA ")) {
                         headerParsed = true;
                     }
-                } else {
-                    Float[] point = Stream.of(line.split(SPACE))
-                            .map(v1 -> Float.valueOf(v1))
-                            .toArray(size -> new Float[size]);
-                    points.add(point);
+                    continue;
                 }
+                Float[] point = Stream.of(line.split(SPACE))
+                        .map(part -> Float.valueOf(part))
+                        .toArray(size -> new Float[3]);
+                points.add(point);
             }
         } catch (IOException e) {
-            throw new RuntimeException("pcd数据解析失败");
+            throw new RuntimeException("pcd点集解析失败，请检查文件内容");
         }
 
-        try {
-            prehandlePoints(points);
-
-            createGeoTiff(points);
-        } catch (Exception e) {
-            throw new RuntimeException("GeoTIFF文件创建失败");
-        }
+        return points;
     }
 
-    /**
-     * 预处理点云数据
-     * 
-     * @param points
-     */
     public static void prehandlePoints(List<Float[]> points) {
         points.forEach(v1 -> {
             Float x = v1[0];
@@ -148,7 +127,7 @@ public class Main {
         final float maxX = points.stream()
                 .map(point -> point[0])
                 .max(Float::compare)
-                .orElse(0f);
+                .orElse(0F);
         points.forEach(v1 -> {
             v1[0] = maxX - v1[0];
         });
@@ -159,164 +138,145 @@ public class Main {
         });
     }
 
-    /**
-     * 创建geotiff
-     * 
-     * @param points
-     */
-    public static void createGeoTiff(List<Float[]> points) {
+    public static void createTiff(List<Float[]> points) {
+        float minX = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE;
+        float maxY = -Float.MAX_VALUE;
+        float minZ = Float.MAX_VALUE;
+        float maxZ = -Float.MAX_VALUE;
+
+        for (Float[] point : points) {
+            minX = Math.min(minX, point[0]);
+            maxX = Math.max(maxX, point[0]);
+            minY = Math.min(minY, point[1]);
+            maxY = Math.max(maxY, point[1]);
+            minZ = Math.min(minZ, point[2]);
+            maxZ = Math.max(maxZ, point[2]);
+        }
+
+        int width = (int) Math.floor(maxX - minX);
+        int height = (int) Math.floor(maxX - minX);
+
+        float[][] elevationData = new float[height][width];
+
+        float pixelSizeX = (maxX - minX) / (width - 1);
+        float pixelSizeY = (maxY - minY) / (height - 1);
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                elevationData[y][x] = Float.NaN;
+            }
+        }
+
+        for (Float[] point : points) {
+            int x = Math.round((point[0] - minX) / pixelSizeX);
+            int y = height - 1 - Math.round((point[1] - minY) / pixelSizeY);
+
+            if (x < width && y >= 0 && y < height) {
+                if (Float.isNaN(elevationData[y][x]) || elevationData[y][x] < point[2]) {
+                    elevationData[y][x] = point[2];
+                }
+            }
+        }
+
+        fillMissingData(elevationData, width, height);
+
+        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                float value = elevationData[y][x];
+
+                int grayValue = 255
+                        - Math.min(255, Math.round((float) Math.pow((value - minZ) / (maxZ - minZ), 2.0) * 255));
+
+                int alphaValue = +Math.min(255,
+                        Math.round((float) Math.pow((value - minZ) / (maxZ - minZ), 2.0) * 225));
+
+                int argb = (alphaValue << 24) | (grayValue << 16) | (grayValue << 8) | grayValue;
+
+                image.setRGB(x, y, argb);
+            }
+        }
+
+        image.createGraphics().drawImage(image, 0, 0, null);
+
+        CoordinateReferenceSystem crs = null;
         try {
-            float minX = Float.MAX_VALUE;
-            float maxX = -Float.MAX_VALUE;
-            float minY = Float.MAX_VALUE;
-            float maxY = -Float.MAX_VALUE;
-            float minZ = Float.MAX_VALUE;
-            float maxZ = -Float.MAX_VALUE;
-
-            for (Float[] point : points) {
-                minX = Math.min(minX, point[0]);
-                maxX = Math.max(maxX, point[0]);
-                minY = Math.min(minY, point[1]);
-                maxY = Math.max(maxY, point[1]);
-                minZ = Math.min(minZ, point[2]);
-                maxZ = Math.max(maxZ, point[2]);
-            }
-
-            int newWidth = (int) (maxX - minX);
-            int newHeight = (int) (maxY - minY);
-
-            float[][] elevationData = new float[newHeight][newWidth];
-
-            float pixelSizeX = (maxX - minX) / (newWidth - 1);
-            float pixelSizeY = (maxY - minY) / (newHeight - 1);
-
-            for (int y = 0; y < newHeight; y++) {
-                for (int x = 0; x < newWidth; x++) {
-                    elevationData[y][x] = Float.NaN;
-                }
-            }
-
-            for (Float[] point : points) {
-                int x = Math.round((point[0] - minX) / pixelSizeX);
-                int y = newHeight - 1 - Math.round((point[1] - minY) / pixelSizeY);
-
-                if (x >= 0 && x < newWidth && y >= 0 && y < newHeight) {
-                    if (Float.isNaN(elevationData[y][x]) || elevationData[y][x] < point[2]) {
-                        elevationData[y][x] = point[2];
-                    }
-                }
-            }
-
-            fillMissingData(elevationData, newWidth, newHeight);
-
-            BufferedImage image = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_ARGB);
-
-            for (int y = 0; y < newHeight; y++) {
-                for (int x = 0; x < newWidth; x++) {
-                    float value = elevationData[y][x];
-
-                    if (Float.isNaN(value)) {
-                    } else {
-
-                        int grayValue = 255 - Math.min(255, Math.max(0,
-                                Math.round(((value - minZ) / (maxZ - minZ)) * 255)));
-
-                        if (grayValue > 205) {
-                        }
-
-                        int alphaValue = 30 + Math.min(225, Math.max(0,
-                                Math.round(((value - minZ) / (maxZ - minZ)) * 225)));
-
-                        int argb = (alphaValue << 24) | (grayValue << 16) | (grayValue << 8) | grayValue;
-                        image.setRGB(x, y, argb);
-                    }
-                }
-            }
-
-            try {
-                File pngFile = new File("temp.png");
-                ImageIO.write(image, "PNG", pngFile);
-                image = ImageIO.read(pngFile);
-                pngFile.delete();
-            } catch (IOException e) {
-                throw new RuntimeException("无法创建临时PNG文件");
-            }
-
-            BufferedImage finalImage = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_4BYTE_ABGR);
-            finalImage.createGraphics().drawImage(image, 0, 0, null);
-
-            CoordinateReferenceSystem crs = CRS.decode("EPSG:4490", true);
-
-            double minLon = MIN_LON + LON_OFFSET - minX * 0.00001;
-            double maxLon = MIN_LON + LON_OFFSET - maxX * 0.00001;
-            double minLat = MIN_LAT + LAT_OFFSET + minY * 0.00001;
-            double maxLat = MIN_LAT + LAT_OFFSET + maxY * 0.00001;
-
-            ReferencedEnvelope mapExtent = new ReferencedEnvelope(
-                    minLon, maxLon, minLat, maxLat, crs);
-
-            GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
-            GridCoverage2D coverage = factory.create("sample", finalImage, mapExtent);
-
-            GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
-            writeParams.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
-            writeParams.setCompressionType("LZW");
-            writeParams.setCompressionQuality(1F);
-            writeParams.setTilingMode(GeoTiffWriteParams.MODE_EXPLICIT);
-            writeParams.setTiling(256, 256);
-
-            ParameterValueGroup params = new GeoTiffFormat().getWriteParameters();
-            params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString())
-                    .setValue(writeParams);
-
-            File outputFile = new File(OUTPUT_TIFF_PATH);
-
-            GeoTiffWriter writer = new GeoTiffWriter(outputFile);
-            try {
-                writer.write(coverage, params.values().toArray(new GeneralParameterValue[0]));
-            } finally {
-                writer.dispose();
-            }
-
+            crs = CRS.decode("EPSG:4490", true);
         } catch (Exception e) {
-            throw new RuntimeException("创建GeoTIFF文件失败");
+        }
+
+        double minLon = MIN_LON + LON_OFFSET - minX * 0.00001;
+        double maxLon = MIN_LON + LON_OFFSET - maxX * 0.00001;
+        double minLat = MIN_LAT + LAT_OFFSET + minY * 0.00001;
+        double maxLat = MIN_LAT + LAT_OFFSET + maxY * 0.00001;
+
+        ReferencedEnvelope mapExtent = new ReferencedEnvelope(minLon, maxLon, minLat, maxLat, crs);
+
+        GridCoverageFactory factory = CoverageFactoryFinder.getGridCoverageFactory(null);
+        GridCoverage2D coverage = factory.create("sample", image, mapExtent);
+
+        GeoTiffWriteParams writeParams = new GeoTiffWriteParams();
+        writeParams.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+        writeParams.setCompressionType("LZW");
+        writeParams.setCompressionQuality(1F);
+        writeParams.setTilingMode(ImageWriteParam.MODE_EXPLICIT);
+        writeParams.setTiling(256, 256);
+
+        ParameterValueGroup params = new GeoTiffFormat().getWriteParameters();
+        params.parameter(AbstractGridFormat.GEOTOOLS_WRITE_PARAMS.getName().toString())
+                .setValue(writeParams);
+
+        File outputFile = new File(OUTPUT_TIFF_PATH);
+
+        GeoTiffWriter writer = null;
+        try {
+            writer = new GeoTiffWriter(outputFile);
+            writer.write(coverage, params.values().toArray(new GeneralParameterValue[0]));
+        } catch (Exception e) {
+            throw new RuntimeException("tiff文件写入失败，请检查输出路径是否正确");
+        } finally {
+            writer.dispose();
         }
     }
 
-    private static void fillMissingData(float[][] data, int width, int height) {
+    private static void fillMissingData(float[][] elevationData, int width, int height) {
         for (int y = 0; y < height; y++) {
-            fillRowGaps(data[y], width);
+            interpolateLinear(elevationData[y], width);
         }
 
         for (int x = 0; x < width; x++) {
-            float[] column = new float[height];
+            float[] columnData = new float[height];
             for (int y = 0; y < height; y++) {
-                column[y] = data[y][x];
+                columnData[y] = elevationData[y][x];
             }
 
-            fillRowGaps(column, height);
+            interpolateLinear(columnData, height);
 
             for (int y = 0; y < height; y++) {
-                data[y][x] = column[y];
+                elevationData[y][x] = columnData[y];
             }
         }
     }
 
-    private static void fillRowGaps(float[] row, int length) {
-        int start = -1;
+    private static void interpolateLinear(float[] data, int length) {
+        int lastValidIndex = -1;
 
-        for (int i = 0; i < length; i++) {
-            if (!Float.isNaN(row[i])) {
-                if (start != -1) {
-                    float startValue = row[start];
-                    float endValue = row[i];
-                    float increment = (endValue - startValue) / (i - start);
+        for (int currentIndex = 0; currentIndex < length; currentIndex++) {
+            if (!Float.isNaN(data[currentIndex])) {
+                if (lastValidIndex != -1) {
+                    float startValue = data[lastValidIndex];
+                    float endValue = data[currentIndex];
+                    int gap = currentIndex - lastValidIndex;
+                    float step = (endValue - startValue) / gap;
 
-                    for (int j = start + 1; j < i; j++) {
-                        row[j] = startValue + increment * (j - start);
+                    for (int i = lastValidIndex + 1; i < currentIndex; i++) {
+                        data[i] = startValue + step * (i - lastValidIndex);
                     }
                 }
-                start = i;
+                lastValidIndex = currentIndex;
             }
         }
     }
