@@ -77,19 +77,19 @@ public class Main {
 
         Call call = HTTP_CLIENT.newCall(request);
 
-        String content;
+        byte[] bytes;
         try (Response response = call.execute()) {
             if (response.code() != 200) {
                 throw new RuntimeException("pcd文件获取失败");
             }
 
             ResponseBody responseBody = response.body();
-            content = responseBody.string();
+            bytes = responseBody.bytes();
         } catch (IOException e) {
             throw new RuntimeException("pcd文件读取失败，请检查网络连接");
         }
 
-        return content;
+        return new String(bytes);
     }
 
     public static List<Float[]> parsePcdPoints(String content) {
@@ -188,11 +188,12 @@ public class Main {
             for (int x = 0; x < width; x++) {
                 float value = elevationData[y][x];
 
-                int grayValue = 255
-                        - Math.min(255, Math.round((float) Math.pow((value - minZ) / (maxZ - minZ), 2.0) * 255));
+                double normalizedValue = (value - minZ) / (maxZ - minZ);
+                double power = 0.2;
+                normalizedValue = Math.pow(normalizedValue, power);
 
-                int alphaValue = +Math.min(255,
-                        Math.round((float) Math.pow((value - minZ) / (maxZ - minZ), 2.0) * 225));
+                int grayValue = 255 - (int) Math.min(255, Math.round(normalizedValue * 255));
+                int alphaValue = (int) Math.min(255, Math.round(normalizedValue * 225));
 
                 int argb = (alphaValue << 24) | (grayValue << 16) | (grayValue << 8) | grayValue;
 
